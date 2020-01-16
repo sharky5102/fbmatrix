@@ -24,8 +24,8 @@ def render():
 
 parser = argparse.ArgumentParser(description='Amazing WS2811 VGA driver')
 parser.add_argument('--emulate', action='store_const', const=True, help='Emulate tree')
-parser.add_argument('--preview', action='store_const', const=True, help='Preview windows instead of actual output')
-parser.add_argument('--raw', action='store_const', const=True, help='Raw mode - use with --preview to view raw pixel data')
+parser.add_argument('--preview', action='store_const', const=True, help='Preview source video instead of actual output')
+parser.add_argument('--raw', action='store_const', const=True, help='Raw mode; show raw output in a window')
 parser.add_argument('--display', default='hub75e', help='Display type (ws2811, hub75e)')
 parser.add_argument('videofile', help='Video to play')
 
