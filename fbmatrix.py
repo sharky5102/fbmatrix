@@ -4,20 +4,25 @@ import OpenGL.GL as gl
 import OpenGL.GLUT as glut
 import time
 import fbo
+import signal
 
 import displays.ws2811
 import displays.hub75e
 import geometry.simple
 import assembly.tree
 
+def signal_handler(sig, frame):
+        sys.exit(0)
+
 class renderer(object):
-    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32):
+    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3):
         self.emulate = emulate
         self.preview = preview
         self.raw = raw
         self.displaytype = display
         self.rows = rows
         self.columns = columns
+        self.supersample = supersample
         self.init()
             
     def clear(self):   
@@ -84,10 +89,10 @@ class renderer(object):
         layoutfile = 'layout.json'
 
         if self.displaytype == 'ws2811':
-            self.signalgenerator = displays.ws2811.signalgenerator(layoutfile)
+            self.signalgenerator = displays.ws2811.signalgenerator(layoutfile, supersample=self.supersample)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
         elif self.displaytype == 'hub75e':
-            self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows)
+            self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows, supersample=self.supersample)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
 
         # Emulation shader
@@ -107,5 +112,7 @@ class renderer(object):
 
     def run(self, render):
         self.render = render
+        signal.signal(signal.SIGINT, signal_handler)
+
         glut.glutMainLoop()
 

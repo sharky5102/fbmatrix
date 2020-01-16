@@ -24,7 +24,8 @@ class signalgenerator(geometry.base):
     fragment_code = """
         uniform sampler2D tex;
         uniform sampler2D lamptex;
-		uniform int max_id;
+	uniform int max_id;
+        uniform highp float supersample;
 		
         out highp vec4 f_color;
         in highp vec2 v_texcoor;
@@ -58,7 +59,7 @@ class signalgenerator(geometry.base):
 				t = vec3(1.0, 1.0, 1.0);
 			} else {
 				highp vec2 lamppos = texelFetch(lamptex, ivec2(pixel, 0), 0).xy * vec2(0.5,0.5) + vec2(.5,.5);
-				t = textureLod(tex, lamppos, 3.0).rgb;
+				t = textureLod(tex, lamppos, supersample).rgb;
 			}
 			
             t = pow(t, vec3(2.2));
@@ -131,6 +132,10 @@ class signalgenerator(geometry.base):
 
         loc = gl.glGetUniformLocation(self.program, "max_id")
         gl.glUniform1i(loc, len(self.lamps))
+
+        loc = gl.glGetUniformLocation(self.program, "supersample")
+        gl.glUniform1f(loc, self.supersample)
+
 
         super(signalgenerator, self).draw()
 

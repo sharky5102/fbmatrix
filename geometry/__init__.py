@@ -59,7 +59,9 @@ class base(object):
         self.color = (1,1,1,1)
 
     def __del__(self):
-        gl.glDeleteBuffers(1, [self.vertexBuffer])
+        try:
+            gl.glDeleteBuffers(1, [self.vertexBuffer])
+        except: pass
 
     def getVertices(self):
         """Override for useful geometry"""

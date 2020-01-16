@@ -26,6 +26,7 @@ class signalgenerator(geometry.base):
         uniform sampler2D tex;
         uniform sampler2D lamptex;
         uniform int columns;
+        uniform highp float supersample;
 
         out highp vec4 f_color;
         in highp vec2 v_texcoor;
@@ -96,8 +97,8 @@ class signalgenerator(geometry.base):
             lowp int E = ((y & 0x10) > 0) ? 1 : 0;
 
             int dx = (1919 - (t / 2)) % columns;
-            highp vec3 top = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy) / 32.0), 3.0).rgb;
-            highp vec3 bottom = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy+16) / 32.0), 3.0).rgb;
+            highp vec3 top = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy) / 32.0), supersample).rgb;
+            highp vec3 bottom = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy+16) / 32.0), supersample).rgb;
             
             lowp int dbitplane = 15 - dsubframe;
             lowp int OE = (t < ((4096 >> subframe))) ? 1 : 0;
@@ -144,9 +145,10 @@ class signalgenerator(geometry.base):
     attributes = { 'position' : 2, 'texcoor' : 2 }
     primitive = gl.GL_QUADS
 
-    def __init__(self, columns, rows):
+    def __init__(self, columns, rows, supersample):
         self.columns = columns
         self.rows = rows
+        self.supersample = supersample
         super(signalgenerator, self).__init__()
 
     def getVertices(self):
@@ -164,6 +166,9 @@ class signalgenerator(geometry.base):
 
         loc = gl.glGetUniformLocation(self.program, "columns")
         gl.glUniform1i(loc, self.columns)
+
+        loc = gl.glGetUniformLocation(self.program, "supersample")
+        gl.glUniform1f(loc, self.supersample)
         
         super(signalgenerator, self).draw()
 
