@@ -13,7 +13,8 @@
 - WS281x: supports arbitrary pixel layout by providing a JSON file with pixel coordinates
 - Audio port usable at the same time
 - Gamma correction of 2.2 applied
-- Provides simple fbmplay.py video player to play videos (including audio), which supports many videoformats due to the use of the ffpyplayer library. It has control for variable supersampling (averaging of input data "behind" an output pixel) and scaling of the output video.
+- Provides simple fbmplay.py video player to play videos (including audio), which supports many videoformats due to the use of the ffpyplayer library. 
+- Control for variable supersampling (averaging of input data "behind" an output pixel) and scaling of the output video.
 
 [HUB75 demo on Adafruit 32x32 RGB matrix using Adafruit RGB matrix bonnet](https://www.youtube.com/watch?v=COhlBRFsR_o)
 
