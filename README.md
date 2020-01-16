@@ -128,4 +128,4 @@ layout.json file:
 To play a video, use the same procedure as for HUB75 to play a video, except
 add the --display parameter:
 
-    ./fbmplay --display ws2812 video.mp4
+    ./fbmplay --display ws2811 video.mp4
