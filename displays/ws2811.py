@@ -87,11 +87,12 @@ class signalgenerator(geometry.base):
     attributes = { 'position' : 2, 'texcoor' : 2 }
     primitive = gl.GL_QUADS
 
-    def __init__(self, filename):
+    def __init__(self, filename, supersample):
         f = open(filename, 'rt')
         data = f.read()
         self.lamps = json.loads(data)
         self.tex = 0
+        self.supersample = supersample
 
         # Present the lamp locations as a 1d texture
         self.mapwidth = pow(2, math.ceil(math.log(len(self.lamps))/math.log(2)))
