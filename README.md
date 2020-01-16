@@ -92,7 +92,7 @@ working setup.
 You can also try to connect one of the GPIO outputs directly (eg GPIO4), but
 that has 3.3v output levels so depending on your string, this may or may not
 work.  My experience is that it works generally, but there is a lot of noise
-and flickering on the output if you have a level shifter.
+and flickering on the output if you don't have a level shifter.
 
 Here is an [example](https://www.youtube.com/watch?v=WgSfZ5cgZH4) of running
 a video on a ws2811 string.
