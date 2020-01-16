@@ -110,9 +110,9 @@ value of each pixel), will be 0.0. Example contents for a 3-pixel ws281x
 string:
 
     [
-      { -1.0, 0.0, 0.0 },
-      {  0.0, 0.0, 0.0 },
-      {  1.0, 0.0, 0.0 }
+      [ -1.0, 0.0, 0.0 ],
+      [  0.0, 0.0, 0.0 ],
+      [  1.0, 0.0, 0.0 ]
     ]
 
 As you can see, the values should be normalized to a (-1, 1) range. The file
