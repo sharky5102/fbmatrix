@@ -11,11 +11,13 @@ import geometry.simple
 import assembly.tree
 
 class renderer(object):
-    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e'):
+    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32):
         self.emulate = emulate
         self.preview = preview
         self.raw = raw
         self.displaytype = display
+        self.rows = rows
+        self.columns = columns
         self.init()
             
     def clear(self):   
@@ -85,7 +87,7 @@ class renderer(object):
             self.signalgenerator = displays.ws2811.signalgenerator(layoutfile)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
         elif self.displaytype == 'hub75e':
-            self.signalgenerator = displays.hub75e.signalgenerator()
+            self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
 
         # Emulation shader

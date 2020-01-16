@@ -25,8 +25,8 @@ class signalgenerator(geometry.base):
     fragment_code = """
         uniform sampler2D tex;
         uniform sampler2D lamptex;
-		uniform int max_id;
-		
+        uniform int columns;
+
         out highp vec4 f_color;
         in highp vec2 v_texcoor;
         in highp float v_id;
@@ -95,24 +95,10 @@ class signalgenerator(geometry.base):
             lowp int D = ((y & 0x8) > 0) ? 1 : 0;
             lowp int E = ((y & 0x10) > 0) ? 1 : 0;
 
-            int dx = (1919 - (t / 2)) % 32;
-            highp vec3 top = textureLod(tex, vec2(float(dx) / 32.0, 1.0 - float(dy) / 32.0), 3.0).rgb;
-            highp vec3 bottom = textureLod(tex, vec2(float(dx) / 32.0, 1.0 - float(dy+16) / 32.0), 3.0).rgb;
+            int dx = (1919 - (t / 2)) % columns;
+            highp vec3 top = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy) / 32.0), 3.0).rgb;
+            highp vec3 bottom = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy+16) / 32.0), 3.0).rgb;
             
-/*            top = top * vec3(0.1);
-            bottom = bottom * vec3(0.1);
-
-/*            top = vec3(float(dx) / 128.0, 0.0, 0.0);
-            bottom = vec3(float(dx) / 128.0, 0.0, 0.0);
-            
-            if ((dx & 1) == 1)
-                top = bottom = vec3(1.0);
-            else
-                top = bottom = vec3(0.0);
-  
-            if ((dy & 1) == 1)
-                top = bottom = vec3(0.0);
-/**/
             lowp int dbitplane = 15 - dsubframe;
             lowp int OE = (t < ((4096 >> subframe))) ? 1 : 0;
             
@@ -158,7 +144,9 @@ class signalgenerator(geometry.base):
     attributes = { 'position' : 2, 'texcoor' : 2 }
     primitive = gl.GL_QUADS
 
-    def __init__(self):
+    def __init__(self, columns, rows):
+        self.columns = columns
+        self.rows = rows
         super(signalgenerator, self).__init__()
 
     def getVertices(self):
@@ -173,6 +161,9 @@ class signalgenerator(geometry.base):
         gl.glActiveTexture(gl.GL_TEXTURE0)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.tex)
         gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+
+        loc = gl.glGetUniformLocation(self.program, "columns")
+        gl.glUniform1i(loc, self.columns)
         
         super(signalgenerator, self).draw()
 
