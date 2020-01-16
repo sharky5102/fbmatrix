@@ -4,8 +4,6 @@ import OpenGL.GL as gl
 import json
 import numpy as np
 
-from PIL import Image
-
 class tree(geometry.base):
     lampsize = 1/50
 

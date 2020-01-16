@@ -24,7 +24,7 @@ This assumes a clean NOOBS install. It should be booting into X-Windows (not a c
 
 		sudo raspi-config
 		
-	then select "enable ssh access"
+	then select "Interfacing Options" and then "SSH"
 
 2. You need to enable the DPI display output on your Raspberry pi, by adding the following to your /boot/config.txt:
 
@@ -47,6 +47,11 @@ This assumes a clean NOOBS install. It should be booting into X-Windows (not a c
 4. Boot the pi. While it boots, your LED matrix will start to display some junk. This is because it is interpreting the boot sequence output by DPI as a data signal. Just ignore it. 
 
 5. Once the pi has booted, ssh to your pi, and run:
+
+		pip3 install pipenv
+		git clone https://github.com/sharky5102/fbmatrix.git
+		cd fbmatrix
+		pipenv shell
 		export DISPLAY=:0
 		./fbmplay some_video.mp4
 
