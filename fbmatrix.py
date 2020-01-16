@@ -33,10 +33,10 @@ class renderer(object):
             gl.glClearColor(0, 0, 0, 0)    
             gl.glClear(gl.GL_COLOR_BUFFER_BIT| gl.GL_DEPTH_BUFFER_BIT)
             
-            gl.glViewport(0, 0, int(screenWidth/2), screenHeight)
-            self.tree.render(reltime())
+            gl.glViewport(0, 0, int(self.screenWidth/2), self.screenHeight)
+            self.tree.render(0)
             
-            gl.glViewport(int(screenWidth/2), 0, int(screenWidth/2), screenHeight)
+            gl.glViewport(int(self.screenWidth/2), 0, int(self.screenWidth/2), self.screenHeight)
             self.texquad.render()
             
         else:
@@ -67,9 +67,9 @@ class renderer(object):
         glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
         glut.glutCreateWindow(b'fbmatrix')
         if self.preview or self.raw:
-            glut.glutReshapeWindow(1500,300)
+            glut.glutReshapeWindow(512, 512)
         elif self.emulate:
-            glut.glutReshapeWindow(1000, 500)
+            glut.glutReshapeWindow(1024, 512)
 
         glut.glutReshapeFunc(lambda w,h: self.reshape(w,h))
         glut.glutDisplayFunc(lambda: self.display())
@@ -89,12 +89,12 @@ class renderer(object):
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
 
         # Emulation shader
-        if self.emulate:
+        if self.emulate or self.preview:
             self.texquad = geometry.simple.texquad()
             self.texquad.setTexture(self.mainfbo.getTexture())
 
         # Tree emulator
-        if self.preview:
+        if self.emulate:
             self.tree = assembly.tree.tree(layoutfile)
             self.tree.setTexture(self.mainfbo.getTexture())
 
