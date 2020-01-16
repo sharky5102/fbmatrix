@@ -1,7 +1,6 @@
 ﻿import numpy as np
 import OpenGL.GL as gl
 import math
-import transforms
 import ctypes
 
 cache = {}

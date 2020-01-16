@@ -2,7 +2,6 @@ import sys
 import numpy as np
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
-import transforms
 import time
 import fbo
 
