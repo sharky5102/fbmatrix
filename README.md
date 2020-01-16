@@ -49,10 +49,9 @@ and networking should be configured and working.
 
 5. Once the pi has booted, ssh to your pi, and run:
 
-		pip3 install pipenv
+		pip3 install ffpyplayer pyrr numpy PyOpenGL
 		git clone https://github.com/sharky5102/fbmatrix.git
 		cd fbmatrix
-		pipenv shell
 		export DISPLAY=:0
 		./fbmplay some_video.mp4
 
