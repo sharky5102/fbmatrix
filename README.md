@@ -15,6 +15,8 @@
 - Gamma correction of 2.2 applied
 - Provides simple fbmplay.py video player to play videos (including audio), which supports many videoformats due to the use of the ffpyplayer library. It has control for variable supersampling (averaging of input data "behind" an output pixel) and scaling of the output video.
 
+[HUB75 demo on Adafruit 32x32 RGB matrix using Adafruit RGB matrix bonnet](https://www.youtube.com/watch?v=COhlBRFsR_o)
+
 ### Quick setup for HUB75 RGB matrices
 **Assuming 1/16 scan RGB matrix**
 
@@ -90,7 +92,10 @@ working setup.
 You can also try to connect one of the GPIO outputs directly (eg GPIO4), but
 that has 3.3v output levels so depending on your string, this may or may not
 work.  My experience is that it works generally, but there is a lot of noise
-and flickering on the output.
+and flickering on the output if you have a level shifter.
+
+Here is an [example](https://www.youtube.com/watch?v=WgSfZ5cgZH4) of running
+a video on a ws2811 string.
 
 To use this, you can use the same configuration as for HUB75 (see above),
 except that the resolution used by DPI should be different.  In this case,
@@ -111,7 +116,7 @@ string:
     ]
 
 As you can see, the values should be normalized to a (-1, 1) range. The file
-above defines 3 LEDs, the first on the left, the one in the middle, and then
+above defines 3 LEDs, the first on the left, then one in the middle, and then
 one on the right. Each pixel has an x, y and z parameter.
 
 If you have a perfect matrix (for example, you have a ws281x matrix on a
