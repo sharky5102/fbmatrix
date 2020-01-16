@@ -19,6 +19,7 @@
 **Assuming 1/16 scan RGB matrix**
 
 This assumes a clean NOOBS install. It should be booting into X-Windows (not a command prompt)
+and networking should be configured and working.
 
 1. Make sure you can access your pi over the network via SSH. You will not be able to use the HDMI port together with FBMatrix (although I think it is possible, just haven't spent to time to find the right configuration). If you can't access your pi via ssh, you can set it up using
 
@@ -77,3 +78,50 @@ To use HUB75e, we use the following rendering method (assuming 1/16 scan RGB mat
 - OE signal is set HIGH for (4096 >> subframe) for each subframe of the line. This allows us to output the same line 12 times (on 12 different framebuffer scanlines), each for a BCM bitplane.
 - Once all 12 bitplanes are output for one display line, we continue to the next by increasing the address line selector (which drives the A, B, C, D and E lines)
 - The first line cannot be used to output OE, since no data is loaded, which increases the scanlines by one. The last line is used to zero out the shift registers on the display. This gives us the extra 2 framebuffer rows.
+
+### Using WS281x output
+FBMatrix also supports using WS281x "neopixel" LED strings. Currently, only
+a single output is supported. One way of physically connecting the LED
+string to your Pi is by using the RGB matrix bonnet, because it
+contains a 3.3v to 5.0v level shifter for all the output pins. In that case
+you simply connect one of the data pins of the 16-pin cable (for example,
+the R1 pin) to your data-in (Din) pin of the ws281x, and you'll have a
+working setup.
+
+You can also try to connect one of the GPIO outputs directly (eg GPIO4), but
+that has 3.3v output levels so depending on your string, this may or may not
+work.  My experience is that it works generally, but there is a lot of noise
+and flickering on the output.
+
+To use this, you can use the same configuration as for HUB75 (see above),
+except that the resolution used by DPI should be different.  In this case,
+use the following configuration for timings:
+
+    dpi_timings=840 0 0 0 0 1024 0 0 50 0 0 0 0 60 0 27000000 6
+
+Additionally, you will have to supply a "layout.json" file. This layout file
+simply lists the position in 3d space of each of your LEDs. In most cases,
+your layout will have the LEDs in a flat surface, so the z value (the third
+value of each pixel), will be 0.0. Example contents for a 3-pixel ws281x
+string:
+
+    [
+      { -1.0, 0.0, 0.0 },
+      {  0.0, 0.0, 0.0 },
+      {  1.0, 0.0, 0.0 }
+    ]
+
+As you can see, the values should be normalized to a (-1, 1) range. The file
+above defines 3 LEDs, the first on the left, the one in the middle, and then
+one on the right. Each pixel has an x, y and z parameter.
+
+If you have a perfect matrix (for example, you have a ws281x matrix on a
+PCB), then you can use the generate-layout.py script to generate a
+layout.json file:
+
+    ./generate-layout.py --columns 64 --rows 16 > layout.json
+
+To play a video, use the same procedure as for HUB75 to play a video, except
+add the --display parameter:
+
+    ./fbmplay --display ws2812 video.mp4
