@@ -94,7 +94,7 @@ class renderer(object):
         if self.interpolate:
             self.mainfbo = fbo.FBO(512, 512)
         else:
-            self.mainfbo = fbo.FBO(512, 512, mag_filter=gl.GL_NEAREST, min_filter=gl.GL_NEAREST)
+            self.mainfbo = fbo.FBO(512, 512, mag_filter=gl.GL_NEAREST, min_filter=gl.GL_NEAREST_MIPMAP_NEAREST)
 
         # Initialize display shader
         layoutfile = 'layout.json'
