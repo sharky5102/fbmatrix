@@ -15,7 +15,7 @@ class FBO:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_INT, None)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
         glGenerateMipmap(GL_TEXTURE_2D)
 
         self.fbo = glGenFramebuffers(1)
@@ -28,12 +28,12 @@ class FBO:
         
     def __enter__(self):
         glPushAttrib(GL_VIEWPORT_BIT)
+        self.lastFB = glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)
         glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, self.fbo);
         glViewport(0, 0, self.width, self.height);
         
     def __exit__(self, type, value, traceback):
-#        glGenerateMipmap(GL_TEXTURE_2D)
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0)
+        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, self.lastFB)
         glPopAttrib()
         
     def bind(self):

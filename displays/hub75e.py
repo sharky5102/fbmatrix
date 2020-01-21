@@ -70,11 +70,10 @@ class signalgenerator(geometry.base):
                       (B1  << BIT_B1);
         }
 
-
         void main()
         {
-            highp int physx = int(v_texcoor.x * 4095.0);
-            highp int physy = int(v_texcoor.y * 193.0);
+            highp int physx = int(v_texcoor.x * 4096.0);
+            highp int physy = int(v_texcoor.y * 194.0);
             
             highp int physend = 192;
             
@@ -85,10 +84,13 @@ class signalgenerator(geometry.base):
             highp int subframe = (physy - 1) % depth;
 
             highp int y = (physy - 1) / depth;
+            if (physy == 0)
+                y = 0;
+
             highp int t = physx;
             
             lowp ivec3 data;
-            lowp int LAT = t >= 3850 && t < 3860 ? 1 : 0;
+            lowp int LAT = t >= 3850 && t < 3862 ? 1 : 0;
             
             lowp int A = ((y & 0x1) > 0) ? 1 : 0;
             lowp int B = ((y & 0x2) > 0) ? 1 : 0;
