@@ -14,8 +14,10 @@ import assembly.tree
 def signal_handler(sig, frame):
         sys.exit(0)
 
+global_init = False
+
 class renderer(object):
-    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3):
+    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3, order='line-first', interpolate=True):
         self.emulate = emulate
         self.preview = preview
         self.raw = raw
@@ -23,6 +25,8 @@ class renderer(object):
         self.rows = rows
         self.columns = columns
         self.supersample = supersample
+        self.order = order
+        self.interpolate = interpolate
         self.init()
             
     def clear(self):   
@@ -70,9 +74,13 @@ class renderer(object):
 
     def init(self):
         # Initialize display
-        glut.glutInit()
-        glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
-        glut.glutCreateWindow(b'fbmatrix')
+        global global_init
+        if not global_init:
+            glut.glutInit()
+            glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
+            glut.glutCreateWindow(b'fbmatrix')
+            global_init = True
+            
         if self.preview or self.raw:
             glut.glutReshapeWindow(512, 512)
         elif self.emulate:
@@ -83,7 +91,10 @@ class renderer(object):
         glut.glutKeyboardFunc(lambda k,x,y: self.keyboard(k,x,y))
 
         # Primary offscreen framebuffer
-        self.mainfbo = fbo.FBO(512, 512)
+        if self.interpolate:
+            self.mainfbo = fbo.FBO(512, 512)
+        else:
+            self.mainfbo = fbo.FBO(512, 512, mag_filter=gl.GL_NEAREST, min_filter=gl.GL_NEAREST)
 
         # Initialize display shader
         layoutfile = 'layout.json'
@@ -92,7 +103,7 @@ class renderer(object):
             self.signalgenerator = displays.ws2811.signalgenerator(layoutfile, supersample=self.supersample)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
         elif self.displaytype == 'hub75e':
-            self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows, supersample=self.supersample)
+            self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows, supersample=self.supersample, order=self.order)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
 
         # Emulation shader

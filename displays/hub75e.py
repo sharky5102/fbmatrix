@@ -46,6 +46,9 @@ class signalgenerator(geometry.base):
         const int BIT_R2 = 0;
         const int BIT_G2 = 4;
         const int BIT_B2 = 3;
+
+        const int depth = 12;
+        const int height = 16;
         
         void setRBits(out ivec3 p, lowp int D, lowp int LAT, lowp int A, lowp int B2, lowp int E, lowp int B, lowp int C) {
                 p.r = (D   << BIT_D) |
@@ -70,6 +73,8 @@ class signalgenerator(geometry.base):
                       (B1  << BIT_B1);
         }
 
+        ORDER_FUNC;
+
         void main()
         {
             highp int physx = int(v_texcoor.x * 4096.0);
@@ -77,20 +82,31 @@ class signalgenerator(geometry.base):
             
             highp int physend = 192;
             
-            int depth = 12;
-            highp int dsubframe = physy % depth;
-            highp int dy = (physy / depth) % 16;
+            highp int dsubframe;
+            highp int dy;
             
-            highp int subframe = (physy - 1) % depth;
-
-            highp int y = (physy - 1) / depth;
+            getLineParams(physy, dy, dsubframe);
+            
+            highp int subframe;
+            highp int y;
+            
+            getLineParams(physy-1, y, subframe);
+            
+            highp int nextsubframe;
+            highp int nexty;
+            
+            getLineParams(physy+1, nexty, nextsubframe);
+            
             if (physy == 0)
                 y = 0;
+                
+            if (nexty != y && physx > 4000)
+                y++;
 
             highp int t = physx;
             
             lowp ivec3 data;
-            lowp int LAT = t >= 3850 && t < 3862 ? 1 : 0;
+            lowp int LAT = t >= 3850 && t < 3860 ? 1 : 0;
             
             lowp int A = ((y & 0x1) > 0) ? 1 : 0;
             lowp int B = ((y & 0x2) > 0) ? 1 : 0;
@@ -99,8 +115,10 @@ class signalgenerator(geometry.base):
             lowp int E = ((y & 0x10) > 0) ? 1 : 0;
 
             int dx = (1919 - (t / 2)) % columns;
-            highp vec3 top = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy) / 32.0), supersample).rgb;
-            highp vec3 bottom = textureLod(tex, vec2(float(dx) / float(columns), 1.0 - float(dy+16) / 32.0), supersample).rgb;
+            highp vec2 ttexpos = vec2(float(dx) / float(columns), 1.0 - (float(dy) / 31.0));
+            highp vec3 top = textureLod(tex, ttexpos, supersample).rgb;
+            highp vec2 btexpos = vec2(float(dx) / float(columns), 1.0 - (float(dy+16) / 31.0));
+            highp vec3 bottom = textureLod(tex, btexpos, supersample).rgb;
             
             lowp int dbitplane = 15 - dsubframe;
             lowp int OE = (t < ((4096 >> subframe))) ? 1 : 0;
@@ -134,7 +152,7 @@ class signalgenerator(geometry.base):
               R1 = G1 = B1 = R2 = G2 = B2 = 0;
               OE = 0;
             }
-
+            
             OE = OE == 0 ? 1 : 0;
             setRBits(data, D, LAT, A, B2, E, B, C);
             setGBits(data, R2, G1, G2, CLK);
@@ -144,13 +162,27 @@ class signalgenerator(geometry.base):
             
         } """
         
+    order = {
+        'line-first': """
+            void getLineParams(int physy, out int y, out int subframe) {
+                y = physy / depth;
+                subframe = physy % depth;
+            }""",
+        'field-first': """
+            void getLineParams(int physy, out int y, out int subframe) {
+                y = physy % height;
+                subframe = physy / height;
+            }""" 
+    }
+        
     attributes = { 'position' : 2, 'texcoor' : 2 }
     primitive = gl.GL_QUADS
 
-    def __init__(self, columns, rows, supersample):
+    def __init__(self, columns, rows, supersample, order='line-first'):
         self.columns = columns
         self.rows = rows
         self.supersample = supersample
+        self.fragment_code = self.fragment_code.replace('ORDER_FUNC;', self.order[order])
         super(signalgenerator, self).__init__()
 
     def getVertices(self):

@@ -70,9 +70,6 @@ class TestHub75(unittest.TestCase):
     width = 4096
     maxDiff = None
     
-    # Set to True to overwrite the test data
-    write = False
-    
     def setup(self):
         pass
 
@@ -86,8 +83,7 @@ class TestHub75(unittest.TestCase):
                 f.write(line + '\n')
                 
     def assertFrameData(self, filename, data):
-        if self.write:
-            self.writeFrameData(filename, data)
+        self.writeFrameData(filename + '.new', data)
             
         with open(filename, 'rt') as f:
             for expected, actual in zip(f.readlines(), hub75ToText(data, self.width)):
@@ -103,3 +99,15 @@ class TestHub75(unittest.TestCase):
             data = gl.glReadPixels(0, 0, 4096, 194, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None);
 
         self.assertFrameData('tst/data/hub75_32x32_white.txt', data)
+
+    def testFieldFirstOrder(self):
+        self.renderer = fbmatrix.renderer(order='field-first')
+        screen = fbo.FBO(self.width, self.height)
+        with screen:
+            self.renderer.render = lambda: self.testPatternWhite()
+            self.renderer.display()       
+
+            data = gl.glReadPixels(0, 0, 4096, 194, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None);
+
+        self.assertFrameData('tst/data/hub75_fieldfirst_32x32_white.txt', data)
+

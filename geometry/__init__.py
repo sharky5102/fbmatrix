@@ -2,6 +2,7 @@
 import OpenGL.GL as gl
 import math
 import ctypes
+import hashlib
 
 cache = {}
 
@@ -44,12 +45,14 @@ class base(object):
     def __init__(self):
         global cache
 
-        # Cache the program based on the class name
-        if self.__class__.__name__ in cache:
-            self.program = cache[self.__class__.__name__]
+        # Cache the program based on the hash of the sahder
+        codehash = hashlib.sha256(self.vertex_code.encode('utf-8') + self.fragment_code.encode('utf-8')).digest()
+        
+        if codehash in cache:
+            self.program = cache[codehash]
         else:
             self.program = self.loadShaderProgram()
-            cache[self.__class__.__name__] = self.program
+            cache[codehash] = self.program
 
         identity = np.eye(4, dtype=np.float32)
         self.setModelView(identity);

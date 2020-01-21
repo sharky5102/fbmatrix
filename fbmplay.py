@@ -59,13 +59,15 @@ parser.add_argument('--rows', default=32, help='Number of rows for matrix displa
 parser.add_argument('--fit', action='store_true', help='Fit the video as large as it can but maintaining aspect ratio. This means some part will be cut off')
 parser.add_argument('--stretch', action='store_true', help='Stretch the video to fit the screen exactly, which means aspect ratio will not be preserved. I really hate it when people do this.')
 parser.add_argument('--supersample', default=3, type=float, help='Supersample the input video (0-8). Higher means blurrier, lower is sharper. Accepts fractions (eg 3.5)')
+parser.add_argument('--field-first', action='store_true', help='Render in field-first order (instead of line-first)')
+parser.add_argument('--no-interpolate', action='store_true', help='Do not interpolate between pixels in the supersampled image')
 parser.add_argument('videofile', help='Video to play')
 
 args = parser.parse_args()
 
 player = MediaPlayer(args.videofile)
 
-matrix = fbmatrix.renderer(emulate=args.emulate, preview=args.preview, raw=args.raw, display=args.display, columns=args.columns, rows=args.rows, supersample=args.supersample)
+matrix = fbmatrix.renderer(emulate=args.emulate, preview=args.preview, raw=args.raw, display=args.display, columns=args.columns, rows=args.rows, supersample=args.supersample, order='field-first' if args.field_first else 'line-first', interpolate=not args.no_interpolate)
 
 bytearray = assembly.bytearray.bytearray()
 
