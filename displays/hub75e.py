@@ -86,6 +86,8 @@ class signalgenerator(geometry.base):
 
         ORDER_FUNC;
         OUTPUT_ENABLE_FUNC;
+        EXTRACT_FUNC;
+
 
         void main()
         {
@@ -94,20 +96,20 @@ class signalgenerator(geometry.base):
             
             highp int physend = 192;
             
-            highp int dsubframe;
+            highp int dfield;
             highp int dy;
             
-            getLineParams(physy, dy, dsubframe);
+            getLineParams(physy, dy, dfield);
             
-            highp int subframe;
+            highp int field;
             highp int y;
             
-            getLineParams(physy-1, y, subframe);
+            getLineParams(physy-1, y, field);
             
-            highp int nextsubframe;
+            highp int nextfield;
             highp int nexty;
             
-            getLineParams(physy+1, nexty, nextsubframe);
+            getLineParams(physy+1, nexty, nextfield);
             
             if (physy == 0)
                 y = 0;
@@ -132,9 +134,7 @@ class signalgenerator(geometry.base):
             highp vec2 btexpos = vec2(float(dx) / float(columns), 1.0 - (float(dy+16) / 31.0));
             highp vec3 bottom = texture(tex, btexpos).rgb;
             
-            lowp int dbitplane = 15 - dsubframe;
-
-            lowp int OE = getOE(t, subframe);
+            lowp int OE = getOE(t, field);
             
             if (t > 3840)
                 OE = 0;
@@ -153,13 +153,8 @@ class signalgenerator(geometry.base):
             top = pow(top, vec3(2.2));
             bottom = pow(bottom, vec3(2.2));
 
-            R1 = (int(top.r * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
-            G1 = (int(top.g * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
-            B1 = (int(top.b * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
-            
-            R2 = (int(bottom.r * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
-            G2 = (int(bottom.g * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
-            B2 = (int(bottom.b * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
+            extract_bitplane(R1, G1, B1, top, dfield);
+            extract_bitplane(R2, G2, B2, bottom, dfield);
 
             if (physy >= physend) {
               R1 = G1 = B1 = R2 = G2 = B2 = 0;
@@ -175,45 +170,72 @@ class signalgenerator(geometry.base):
         
     order = {
         'line-first': """
-            void getLineParams(int physy, out int y, out int subframe) {
+            void getLineParams(int physy, out int y, out int field) {
                 y = physy / depth;
-                subframe = physy % depth;
+                field = physy % depth;
             }""",
         'field-first': """
-            void getLineParams(int physy, out int y, out int subframe) {
+            void getLineParams(int physy, out int y, out int field) {
                 y = physy % height;
-                subframe = physy / height;
+                field = physy / height;
             }""" 
     }
 
     output_enable = {
         'normal': """
-            int getOE(int t, int subframe) {
-                return (t < ((4096 >> subframe))) ? 1 : 0;
+            int getOE(int t, int field) {
+                return (t < ((4096 >> field))) ? 1 : 0;
             }
         """,
         'es-pwm': """
-        int getOE(int t, int subframe) {
+        int getOE(int t, int field) {
             int rep;
             
-            switch(subframe) {
+            switch(field) {
                 case 0: rep = 1; break;
                 default:
-                    rep = (1 << subframe) + subframe;
+                    rep = (1 << field) + field;
             }
             return (t % rep) == 0 ? 1 : 0;
         }
+        """,
+        'enable': """
+        int getOE(int t, int field) {
+            return 1;
+        }
         """
+    }
+
+    extract = {
+        'bcm':"""
+        void extract_bitplane(out lowp int R, out lowp int G, out lowp int B, highp vec3 pixel, lowp int dfield) {
+            lowp int dbitplane = 15 - dfield;
+
+            R = (int(pixel.r * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
+            G = (int(pixel.g * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
+            B = (int(pixel.b * 65535.0 ) & (1 << dbitplane)) > 0 ? 1 : 0;
+        }""",
+        'pwm':"""
+        void extract_bitplane(out lowp int R, out lowp int G, out lowp int B, highp vec3 pixel, lowp int dfield) {
+            R = (int(pixel.r * 11.0) > dfield) ? 1 : 0;
+            G = (int(pixel.g * 11.0) > dfield) ? 1 : 0;
+            B = (int(pixel.b * 11.0) > dfield) ? 1 : 0;
+        }"""
     }
         
     attributes = { 'position' : 2, 'texcoor' : 2 }
     primitive = gl.GL_QUADS
 
-    def __init__(self, columns, rows, supersample, order='line-first', oe='normal'):
+    def __init__(self, columns, rows, supersample, order='line-first', oe='normal', extract='bcm'):
         self.columns = columns
         self.rows = rows
         self.supersample = supersample
-        self.fragment_code = self.fragment_code.replace('ORDER_FUNC;', self.order[order]).replace('OUTPUT_ENABLE_FUNC;', self.output_enable[oe])
+        if extract == 'pwm':
+            oe = 'enable' # This implied
+        self.fragment_code = self.fragment_code.replace('ORDER_FUNC;', self.order[order])
+        self.fragment_code = self.fragment_code.replace('OUTPUT_ENABLE_FUNC;', self.output_enable[oe])
+        self.fragment_code = self.fragment_code.replace('EXTRACT_FUNC;', self.extract[extract])
+        
         super(signalgenerator, self).__init__()
 
     def getVertices(self):

@@ -2,7 +2,7 @@
 import fbmatrix
 import argparse
 import time
-import assembly.bytearray
+import assembly.yuv420
 from ffpyplayer.player import MediaPlayer
 import numpy as np
 from pyrr import Matrix44
@@ -18,13 +18,12 @@ def render():
     if frame:
         img, t = frame
 
-        data = img.to_bytearray()[0]
+        data = img.to_bytearray()
         size = img.get_size()
         
         videoAspect = size[0]/size[1]
         
-        data = bytes(data)
-        bytearray.setRGB(data, size[0], size[1])
+        bytearray.setYUV420(data, size[0], size[1])
 
         time.sleep(val)
 
@@ -59,10 +58,10 @@ parser.add_argument('videofile', help='Video to play')
 
 args = parser.parse_args()
 
-player = MediaPlayer(args.videofile)
+player = MediaPlayer(args.videofile, ff_opts={'out_fmt':'yuv420p'})
 
 matrix = common.renderer_from_args(args)
 
-bytearray = assembly.bytearray.bytearray(supersample = args.supersample)
+bytearray = assembly.yuv420.bytearray(supersample = args.supersample)
 
 matrix.run(render)

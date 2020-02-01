@@ -43,3 +43,4 @@ class bytearray(geometry.simple.texquad):
         gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, w, h, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, bytes)
         if self.supersample:
             gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+
