@@ -63,7 +63,6 @@ class renderer(object):
                 self.signalgenerator.render()
                     
         glut.glutSwapBuffers()
-        gl.glFinish()
         glut.glutPostRedisplay()
     
     def reshape(self,width,height):
