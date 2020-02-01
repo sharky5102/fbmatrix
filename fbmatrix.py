@@ -36,9 +36,12 @@ class renderer(object):
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
 
     def display(self):
+
         with self.mainfbo:
             self.clear()
             self.render()
+            
+        gl.glMemoryBarrier(gl.GL_FRAMEBUFFER_BARRIER_BIT)
             
         if self.emulate:
             gl.glClearColor(0, 0, 0, 0)    
@@ -60,6 +63,7 @@ class renderer(object):
                 self.signalgenerator.render()
                     
         glut.glutSwapBuffers()
+        gl.glFinish()
         glut.glutPostRedisplay()
     
     def reshape(self,width,height):
@@ -77,7 +81,7 @@ class renderer(object):
         global global_init
         if not global_init:
             glut.glutInit()
-            glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA)
+            glut.glutInitDisplayMode(glut.GLUT_DOUBLE | glut.GLUT_RGBA | glut.GLUT_DEPTH | glut.GLUT_ALPHA)
             glut.glutCreateWindow(b'fbmatrix')
             global_init = True
             
@@ -91,10 +95,7 @@ class renderer(object):
         glut.glutKeyboardFunc(lambda k,x,y: self.keyboard(k,x,y))
 
         # Primary offscreen framebuffer
-        if self.interpolate:
-            self.mainfbo = fbo.FBO(512, 512)
-        else:
-            self.mainfbo = fbo.FBO(512, 512, mag_filter=gl.GL_NEAREST, min_filter=gl.GL_NEAREST_MIPMAP_NEAREST)
+        self.mainfbo = fbo.FBO(self.columns, 32,  mag_filter = gl.GL_NEAREST, min_filter = gl.GL_NEAREST)
 
         # Initialize display shader
         layoutfile = 'layout.json'
@@ -120,7 +121,7 @@ class renderer(object):
         glut.glutSetCursor(glut.GLUT_CURSOR_NONE);
         if not self.raw and not self.preview and not self.emulate:
             glut.glutFullScreen()
-
+            
     def run(self, render):
         self.render = render
         signal.signal(signal.SIGINT, signal_handler)

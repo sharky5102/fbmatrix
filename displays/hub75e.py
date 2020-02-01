@@ -116,9 +116,9 @@ class signalgenerator(geometry.base):
 
             int dx = (1919 - (t / 2)) % columns;
             highp vec2 ttexpos = vec2(float(dx) / float(columns), 1.0 - (float(dy) / 31.0));
-            highp vec3 top = textureLod(tex, ttexpos, supersample).rgb;
+            highp vec3 top = texture(tex, ttexpos).rgb;
             highp vec2 btexpos = vec2(float(dx) / float(columns), 1.0 - (float(dy+16) / 31.0));
-            highp vec3 bottom = textureLod(tex, btexpos, supersample).rgb;
+            highp vec3 bottom = texture(tex, btexpos).rgb;
             
             lowp int dbitplane = 15 - dsubframe;
             lowp int OE = (t < ((4096 >> subframe))) ? 1 : 0;

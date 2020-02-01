@@ -67,8 +67,8 @@ args = parser.parse_args()
 
 player = MediaPlayer(args.videofile)
 
-matrix = fbmatrix.renderer(emulate=args.emulate, preview=args.preview, raw=args.raw, display=args.display, columns=args.columns, rows=args.rows, supersample=args.supersample, order='field-first' if args.field_first else 'line-first', interpolate=not args.no_interpolate)
+matrix = fbmatrix.renderer(emulate=args.emulate, preview=args.preview, raw=args.raw, display=args.display, columns=args.columns, rows=args.rows, order='field-first' if args.field_first else 'line-first', interpolate=not args.no_interpolate)
 
-bytearray = assembly.bytearray.bytearray()
+bytearray = assembly.bytearray.bytearray(supersample = args.supersample)
 
 matrix.run(render)
