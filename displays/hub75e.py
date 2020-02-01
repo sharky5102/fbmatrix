@@ -85,6 +85,7 @@ class signalgenerator(geometry.base):
         }
 
         ORDER_FUNC;
+        OUTPUT_ENABLE_FUNC;
 
         void main()
         {
@@ -132,7 +133,8 @@ class signalgenerator(geometry.base):
             highp vec3 bottom = texture(tex, btexpos).rgb;
             
             lowp int dbitplane = 15 - dsubframe;
-            lowp int OE = (t < ((4096 >> subframe))) ? 1 : 0;
+
+            lowp int OE = getOE(t, subframe);
             
             if (t > 3840)
                 OE = 0;
@@ -183,15 +185,35 @@ class signalgenerator(geometry.base):
                 subframe = physy / height;
             }""" 
     }
+
+    output_enable = {
+        'normal': """
+            int getOE(int t, int subframe) {
+                return (t < ((4096 >> subframe))) ? 1 : 0;
+            }
+        """,
+        'es-pwm': """
+        int getOE(int t, int subframe) {
+            int rep;
+            
+            switch(subframe) {
+                case 0: rep = 1; break;
+                default:
+                    rep = (1 << subframe) + subframe;
+            }
+            return (t % rep) == 0 ? 1 : 0;
+        }
+        """
+    }
         
     attributes = { 'position' : 2, 'texcoor' : 2 }
     primitive = gl.GL_QUADS
 
-    def __init__(self, columns, rows, supersample, order='line-first'):
+    def __init__(self, columns, rows, supersample, order='line-first', oe='normal'):
         self.columns = columns
         self.rows = rows
         self.supersample = supersample
-        self.fragment_code = self.fragment_code.replace('ORDER_FUNC;', self.order[order])
+        self.fragment_code = self.fragment_code.replace('ORDER_FUNC;', self.order[order]).replace('OUTPUT_ENABLE_FUNC;', self.output_enable[oe])
         super(signalgenerator, self).__init__()
 
     def getVertices(self):

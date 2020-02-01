@@ -17,7 +17,7 @@ def signal_handler(sig, frame):
 global_init = False
 
 class renderer(object):
-    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3, order='line-first', interpolate=True):
+    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3, order='line-first', interpolate=True, oe='normal'):
         self.emulate = emulate
         self.preview = preview
         self.raw = raw
@@ -27,6 +27,7 @@ class renderer(object):
         self.supersample = supersample
         self.order = order
         self.interpolate = interpolate
+        self.oe = oe
         self.init()
             
     def clear(self):   
@@ -103,7 +104,7 @@ class renderer(object):
             self.signalgenerator = displays.ws2811.signalgenerator(layoutfile, supersample=self.supersample)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
         elif self.displaytype == 'hub75e':
-            self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows, supersample=self.supersample, order=self.order)
+            self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows, supersample=self.supersample, order=self.order, oe=self.oe)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
 
         # Emulation shader
