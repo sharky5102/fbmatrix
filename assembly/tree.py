@@ -1,18 +1,13 @@
-import assembly
-import random
 import geometry.tree
 import geometry.simple
 import OpenGL.GL as gl
 import numpy as np
-import math
 import pyrr
 from pyrr import Matrix44
 
 class tree():
-    def __init__(self, filename):
-        f = open(filename, 'rt')
-        data = f.read()
-        self.tree = geometry.tree.tree(data)
+    def __init__(self, layout):
+        self.tree = geometry.tree.tree(layout)
         self.lt = geometry.simple.texquad()
         
     def setProjection(self, M):

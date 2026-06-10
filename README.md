@@ -104,27 +104,54 @@ use the following configuration for timings:
 
     dpi_timings=840 0 0 0 0 1024 0 0 50 0 0 0 0 60 0 27000000 6
 
-Additionally, you will have to supply a "layout.json" file. This layout file
-simply lists the position in 3d space of each of your LEDs. In most cases,
-your layout will have the LEDs in a flat surface, so the z value (the third
-value of each pixel), will be 0.0. Example contents for a 3-pixel ws281x
-string:
+Additionally, you will have to supply a layout to the renderer. The layout
+lists the position in 3d space of each of your LEDs plus an integer source
+mode. In most cases, your layout will have the LEDs in a flat surface, so the
+z value (the third value of each pixel), will be 0.0. The source mode controls
+where the LED color comes from:
+
+- 0: sample the source framebuffer normally
+- 1: ignore the framebuffer and use red
+- 2: ignore the framebuffer and use blue
+- 3: ignore the framebuffer and use green
+
+The command-line tools clear source modes to 0 when loading a layout, except
+for `fbmtest layout-colors`. This lets one layout file contain diagnostic
+source modes for testing while still behaving normally in playback tools such
+as `fbmplay`.
+
+Example contents for a 3-pixel ws281x string:
 
     [
-      [ -1.0, 0.0, 0.0 ],
-      [  0.0, 0.0, 0.0 ],
-      [  1.0, 0.0, 0.0 ]
+      [ -1.0, 0.0, 0.0, 0 ],
+      [  0.0, 0.0, 0.0, 1 ],
+      [  1.0, 0.0, 0.0, 0 ]
     ]
 
 As you can see, the values should be normalized to a (-1, 1) range. The file
 above defines 3 LEDs, the first on the left, then one in the middle, and then
-one on the right. Each pixel has an x, y and z parameter.
+one on the right. Each pixel has an x, y, z and c parameter.
+
+If you keep the layout in JSON, load it in your application and pass it to
+the renderer explicitly:
+
+    import json
+    import fbmatrix
+
+    with open('layout.json', 'rt') as f:
+        layout = json.load(f)
+
+    matrix = fbmatrix.renderer(display='ws2811', layout=layout)
 
 If you have a perfect matrix (for example, you have a ws281x matrix on a
 PCB), then you can use the generate-layout.py script to generate a
 layout.json file:
 
     ./generate-layout.py --columns 64 --rows 16 > layout.json
+
+By default, the generated layout cycles row source modes through red, blue and
+green for `fbmtest layout-colors`. Use `--source-modes framebuffer` to write
+source mode 0 for every LED instead.
 
 To play a video, use the same procedure as for HUB75 to play a video, except
 add the --display parameter:

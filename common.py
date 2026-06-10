@@ -2,6 +2,7 @@ import json
 from json import JSONDecodeError
 
 import fbmatrix
+import ledlayout
 
 
 def add_args(parser):
@@ -22,24 +23,28 @@ def add_args(parser):
     ws2811.add_argument('--layout', default='layout.json', help='JSON file containing WS2811 LED positions')
 
 
-def load_layout(filename):
+def load_layout(filename, preserve_source_modes=False):
     last_error = None
 
     for encoding in ('utf-8-sig', 'utf-16'):
         try:
             with open(filename, 'rt', encoding=encoding) as f:
-                return json.load(f)
+                layout = ledlayout.require_xyzc_layout(json.load(f))
+                if preserve_source_modes:
+                    return layout
+
+                return [(x, y, z, 0) for x, y, z, source_mode in layout]
         except (UnicodeDecodeError, JSONDecodeError) as e:
             last_error = e
 
     raise RuntimeError('Could not read layout JSON from %s: %s' % (filename, last_error))
 
 
-def renderer_from_args(args):
+def renderer_from_args(args, preserve_source_modes=False):
     layout = None
 
     if args.display == 'ws2811' or args.emulate:
-        layout = load_layout(args.layout)
+        layout = load_layout(args.layout, preserve_source_modes=preserve_source_modes)
 
     return fbmatrix.renderer(
         emulate=args.emulate,

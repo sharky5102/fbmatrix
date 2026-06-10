@@ -6,6 +6,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Layout generator')
 parser.add_argument('--columns', help='Number of columns for matrix displays', type=int, required=True)
 parser.add_argument('--rows', help='Number of rows for matrix displays', type=int, required=True)
+parser.add_argument('--source-modes', default='row-colors', choices=['framebuffer', 'row-colors'], help='Source mode values to write into the generated layout')
 
 args = parser.parse_args()
 
@@ -27,8 +28,13 @@ for i in range(0, n):
     column = i - (row * x)
     if not right:
         column = x - 1 - column
+
+    if args.source_modes == 'row-colors':
+        mode = row % 3 + 1
+    else:
+        mode = 0
     
-    points.append( (xoff + ((column+0.5) * size), yoff + ((row+0.5) * size), 0) )
+    points.append( (xoff + ((column+0.5) * size), yoff + ((row+0.5) * size), 0, mode) )
 
 
 print(json.dumps(points))

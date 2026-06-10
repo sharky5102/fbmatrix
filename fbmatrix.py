@@ -17,7 +17,7 @@ def signal_handler(sig, frame):
 global_init = False
 
 class renderer(object):
-    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3, order='line-first', interpolate=True, oe='normal', extract='bcm'):
+    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3, order='line-first', interpolate=True, oe='normal', extract='bcm', layout=None):
         self.emulate = emulate
         self.preview = preview
         self.raw = raw
@@ -29,6 +29,7 @@ class renderer(object):
         self.interpolate = interpolate
         self.oe = oe
         self.extract = extract
+        self.layout = layout
         self.init()
             
     def clear(self):   
@@ -75,7 +76,10 @@ class renderer(object):
 
     def keyboard(self, key, x, y ):
         if key == b'\033':
-            sys.exit( )
+            try:
+                glut.glutLeaveMainLoop()
+            except Exception:
+                glut.glutDestroyWindow(glut.glutGetWindow())
 
     def init(self):
         # Initialize display
@@ -98,11 +102,10 @@ class renderer(object):
         # Primary offscreen framebuffer
         self.mainfbo = fbo.FBO(self.columns, 32,  mag_filter = gl.GL_NEAREST, min_filter = gl.GL_NEAREST)
 
-        # Initialize display shader
-        layoutfile = 'layout.json'
-
         if self.displaytype == 'ws2811':
-            self.signalgenerator = displays.ws2811.signalgenerator(layoutfile, supersample=self.supersample)
+            if self.layout is None:
+                raise RuntimeError('WS2811 display requires a layout argument')
+            self.signalgenerator = displays.ws2811.signalgenerator(self.layout, supersample=self.supersample)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
         elif self.displaytype == 'hub75e':
             self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows, supersample=self.supersample, order=self.order, oe=self.oe, extract=self.extract)
@@ -115,7 +118,9 @@ class renderer(object):
 
         # Tree emulator
         if self.emulate:
-            self.tree = assembly.tree.tree(layoutfile)
+            if self.layout is None:
+                raise RuntimeError('Emulation requires a layout argument')
+            self.tree = assembly.tree.tree(self.layout)
             self.tree.setTexture(self.mainfbo.getTexture())
 
         # Render

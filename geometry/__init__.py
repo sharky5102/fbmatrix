@@ -144,7 +144,10 @@ class base(object):
 
         for attrib in attrNames:
             if attrData[attrib]:
-                data[attrib] = attrData[attrib]
+                values = np.asarray(attrData[attrib], dtype=np.float32)
+                if attrNames[attrib] == 1 and values.ndim == 1:
+                    values = values.reshape((size, 1))
+                data[attrib] = values
 
         # Upload data
         gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data, gl.GL_DYNAMIC_DRAW)

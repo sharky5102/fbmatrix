@@ -90,16 +90,27 @@ def render_tear():
     z = z % (32)
 
 
+def render_layout_colors():
+    global bytearray
+
+    width = args.columns
+    height = 32
+
+    bytearray.setRGB(bytes(width * height * 3), width, height)
+    bytearray.render()
+
+
 parser = argparse.ArgumentParser(description='Amazing WS2811 VGA driver')
 common.add_args(parser)
 
-parser.add_argument('type', help='Test pattern. One of: gradient, contrast')
+parser.add_argument('type', help='Test pattern. One of: gradient, contrast, tear, layout-colors')
 parser.add_argument('--channel', default='all', help='Test pattern color if applicable. One of red, green, blue or all')
 
 patterns = {
   'contrast' : render_contrast,
   'gradient' : render_gradient,
-  'tear': render_tear
+  'tear': render_tear,
+  'layout-colors': render_layout_colors
 }
 
 args = parser.parse_args()
@@ -113,7 +124,7 @@ if args.channel not in channels:
     print('channel muse be one of %r' % channels)
     exit(1)
 
-matrix = common.renderer_from_args(args)
+matrix = common.renderer_from_args(args, preserve_source_modes=args.type == 'layout-colors')
 
 bytearray = assembly.bytearray.bytearray()
 

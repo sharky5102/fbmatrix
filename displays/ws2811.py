@@ -1,9 +1,9 @@
 ﻿import geometry
 import math
+import ledlayout
 import OpenGL.GL as gl
 import numpy as np
 import ctypes
-import json
 
 class signalgenerator(geometry.base):
     vertex_code = """
@@ -58,8 +58,18 @@ class signalgenerator(geometry.base):
 			if (pixel > max_id) {
 				t = vec3(1.0, 1.0, 1.0);
 			} else {
-				highp vec2 lamppos = texelFetch(lamptex, ivec2(pixel, 0), 0).xy * vec2(0.5,0.5) + vec2(.5,.5);
-				t = textureLod(tex, lamppos, supersample).rgb;
+				highp vec4 lamp = texelFetch(lamptex, ivec2(pixel, 0), 0);
+				int source_mode = int(lamp.w + 0.5);
+				if (source_mode == 1) {
+					t = vec3(1.0, 0.0, 0.0);
+				} else if (source_mode == 2) {
+					t = vec3(0.0, 0.0, 1.0);
+				} else if (source_mode == 3) {
+					t = vec3(0.0, 1.0, 0.0);
+				} else {
+					highp vec2 lamppos = lamp.xy * vec2(0.5,0.5) + vec2(.5,.5);
+					t = textureLod(tex, lamppos, supersample).rgb;
+				}
 			}
 			
             t = pow(t, vec3(2.2));
@@ -87,29 +97,28 @@ class signalgenerator(geometry.base):
     attributes = { 'position' : 2, 'texcoor' : 2 }
     primitive = gl.GL_QUADS
 
-    def __init__(self, filename, supersample):
-        f = open(filename, 'rt')
-        data = f.read()
-        self.lamps = json.loads(data)
+    def __init__(self, layout, supersample):
+        self.lamps = ledlayout.require_xyzc_layout(layout)
         self.tex = 0
         self.supersample = supersample
 
         # Present the lamp locations as a 1d texture
         self.mapwidth = pow(2, math.ceil(math.log(len(self.lamps))/math.log(2)))
 
-        data = np.zeros(self.mapwidth, (np.float32, 3))
+        data = np.zeros(self.mapwidth, (np.float32, 4))
         
         for i in range(0, len(self.lamps)):
             lamp = self.lamps[i]
             data[i][0] = lamp[0];
             data[i][1] = -lamp[1];
             data[i][2] = lamp[2];
+            data[i][3] = lamp[3];
         
         self.lamptex = gl.glGenTextures(1)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.lamptex)
         gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
         gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB16F, self.mapwidth, 1, 0, gl.GL_RGB, gl.GL_FLOAT, data)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA16F, self.mapwidth, 1, 0, gl.GL_RGBA, gl.GL_FLOAT, data)
 
         super(signalgenerator, self).__init__()
 
