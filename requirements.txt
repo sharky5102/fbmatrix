@@ -1,0 +1,4 @@
+PyOpenGL
+numpy
+pyrr
+pytest
