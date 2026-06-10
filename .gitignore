@@ -1,3 +1,7 @@
 *~
 *.pyc
 Pipfile.lock
+.pytest_cache/
+.pytest_cache_local/
+tst/data/*.new
+layout.json
