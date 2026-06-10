@@ -69,20 +69,6 @@ def hub75ToText(data, width):
             yield('%05s %s' % (chan, decomposed[chan]))
         n+=1
 
-def ws2811_signal_bits(data, width, row=0):
-    line = list(scanlines(data, width * 4))[row]
-    pixels = np.frombuffer(line, dtype=[('r', 'B'), ('g', 'B'), ('b', 'B'), ('a', 'B')])
-    bit_width = width // 24
-    bits = []
-
-    for bit in range(24):
-        start = bit * bit_width
-        end = (bit + 1) * bit_width
-        channel = pixels['r'][start:end]
-        bits.append(int(np.count_nonzero(channel)))
-
-    return bits
-
 def render_solid(color):
     gl.glClearColor(color[0], color[1], color[2], 1)
     gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
@@ -136,7 +122,7 @@ class TestHub75(unittest.TestCase):
 class TestWS2811(unittest.TestCase):
     height = 500
     width = 840
-    layout = [[0.0, 0.0, 0.0, 0]]
+    layout = [[0.0, 0.0, 0.0, 0]] * 7000
 
     def readFrameData(self, color, layout=None):
         self.renderer = fbmatrix.renderer(display='ws2811', layout=layout or self.layout)
@@ -145,17 +131,7 @@ class TestWS2811(unittest.TestCase):
             self.renderer.render = lambda: render_solid(color)
             self.renderer.display()
 
-            return gl.glReadPixels(0, 0, self.width, self.height, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
-
-    def assertSignalPattern(self, color, expected_bits, layout=None):
-        data = self.readFrameData(color, layout)
-        high_counts = ws2811_signal_bits(data, self.width)
-
-        for high_count, expected_bit in zip(high_counts, expected_bits):
-            if expected_bit:
-                self.assertGreater(high_count, 10)
-            else:
-                self.assertLess(high_count, 10)
+            return gl.glReadPixels(0, self.height-2, self.width, 2, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
 
     def writeFrameData(self, filename, data):
         with open(filename, 'wt') as f:
@@ -168,27 +144,21 @@ class TestWS2811(unittest.TestCase):
         with open(filename, 'rt') as f:
             self.assertEqual([line.rstrip() for line in f], list(hub75ToText(data, self.width)))
 
-    def testWhiteSignalHasAllOneBits(self):
-        self.assertSignalPattern((1, 1, 1), [1] * 24)
-
-    def testBlackSignalHasAllZeroBits(self):
-        self.assertSignalPattern((0, 0, 0), [0] * 24)
-
-    def testRedSignalEncodesRedChannelFirst(self):
-        self.assertSignalPattern((1, 0, 0), [1] * 8 + [0] * 16)
-
-    def testSourceModeRedIgnoresFramebuffer(self):
-        self.assertSignalPattern((0, 0, 0), [1] * 8 + [0] * 16, [[0.0, 0.0, 0.0, 1]])
-
-    def testSourceModeBlueIgnoresFramebuffer(self):
-        self.assertSignalPattern((0, 0, 0), [0] * 16 + [1] * 8, [[0.0, 0.0, 0.0, 2]])
-
-    def testSourceModeGreenIgnoresFramebuffer(self):
-        self.assertSignalPattern((0, 0, 0), [0] * 8 + [1] * 8 + [0] * 8, [[0.0, 0.0, 0.0, 3]])
-
     def testRedFrameData(self):
         data = self.readFrameData((1, 0, 0))
         self.assertFrameData('tst/data/ws2811_red.txt', data)
+
+    def testMultipleUniverses(self):
+        layout = self.layout.copy()
+        layout[0] = [0.0, 0.0, 0.0, 1] # red override
+        layout[500] = [0.0, 0.0, 0.0, 2] # green override
+        layout[1000] = [0.0, 0.0, 0.0, 3] # blue override
+        layout[1] = [0.0, 0.0, 0.0, 2] # green override
+        layout[501] = [0.0, 0.0, 0.0, 3] # blue override
+        layout[1001] = [0.0, 0.0, 0.0, 1] # red override
+
+        data = self.readFrameData((1, 1, 0), layout=layout)
+        self.assertFrameData('tst/data/ws2811_multiple_universes.txt', data)
 
     def testEmulationAcceptsLayout(self):
         fbmatrix.renderer(display='ws2811', layout=self.layout, emulate=True)

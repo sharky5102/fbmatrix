@@ -24,7 +24,7 @@ class signalgenerator(geometry.base):
     fragment_code = """
         uniform sampler2D tex;
         uniform sampler2D lamptex;
-	uniform int max_id;
+    	uniform int max_id;
         uniform highp float supersample;
 		
         out highp vec4 f_color;
@@ -83,41 +83,26 @@ class signalgenerator(geometry.base):
                       (B1 > 0 ? MASK_B1 : 0);
         }
         
-        void main()
-        {
-            int y = int(v_texcoor.y * 500.0);
-			int pixel, bit;
-			lowp float bitoffset;
-			
-			if(false) {
-				// ws2811 - 400kbit/sec
-				pixel = y / 2;
-				int subpixel = y % 2;
-				
-				bit = int(v_texcoor.x * 12.0); // 12 bits per scanline
-				bit += int(subpixel * 12); // second scanline
-				bitoffset = (v_texcoor.x * 12.0) - float(bit % 12);
-            } else {
-                // ws2812b - 800kbit/sec
-                pixel = y;
-
-				bit = int(v_texcoor.x * 24.0); // 24 bits per scanline
-				bitoffset = (v_texcoor.x * 24.0) - float(bit % 24);
-			}
-			
+        int getSignal(int pixel, int bit, lowp float bitoffset) {
 			highp vec3 t;
 			
 			if (pixel > max_id) {
 				t = vec3(1.0, 1.0, 1.0);
 			} else {
+                // Override modes:
+                // 0 = normal (read from texture)
+                // 1 = red
+                // 2 = green
+                // 3 = blue
+
 				highp vec4 lamp = texelFetch(lamptex, ivec2(pixel, 0), 0);
 				int source_mode = int(lamp.w + 0.5);
 				if (source_mode == 1) {
 					t = vec3(1.0, 0.0, 0.0);
 				} else if (source_mode == 2) {
-					t = vec3(0.0, 0.0, 1.0);
-				} else if (source_mode == 3) {
 					t = vec3(0.0, 1.0, 0.0);
+				} else if (source_mode == 3) {
+					t = vec3(0.0, 0.0, 1.0);
 				} else {
 					highp vec2 lamppos = lamp.xy * vec2(0.5,0.5) + vec2(.5,.5);
 					t = textureLod(tex, lamppos, supersample).rgb;
@@ -142,9 +127,39 @@ class signalgenerator(geometry.base):
             else
                 signal = bitoffset < 0.46 ? 1 : 0;
 
-            // setBits(data, D, LAT, A, B2, E, B, C, R2, G1, G2, CLK, OE, R1, B1);
+            return signal;
+        }
+
+        void main()
+        {
+            int y = int(v_texcoor.y * 500.0);
+			int pixel, bit;
+			lowp float bitoffset;
+			
+            pixel = y;
+            bit = int(v_texcoor.x * 24.0); // 24 bits per scanline
+            bitoffset = (v_texcoor.x * 24.0) - float(bit % 24);
+			
+            lowp int R1, G1, B1, R2, G2, B2, D, LAT, A, B, C, E, OE, CLK;
+            R1 = G1 = B1 = R2 = G2 = B2 = D = LAT = A = B = C = E = OE = CLK = 0;
+
+            R1 =  getSignal(pixel, bit, bitoffset); pixel += 500;
+            G1 =  getSignal(pixel, bit, bitoffset); pixel += 500;
+            B1 =  getSignal(pixel, bit, bitoffset); pixel += 500;
+            R2 =  getSignal(pixel, bit, bitoffset); pixel += 500;
+            G2 =  getSignal(pixel, bit, bitoffset); pixel += 500;
+            B2 =  getSignal(pixel, bit, bitoffset); pixel += 500;
+            D =   getSignal(pixel, bit, bitoffset); pixel += 500;
+            LAT = getSignal(pixel, bit, bitoffset); pixel += 500;
+            A =   getSignal(pixel, bit, bitoffset); pixel += 500;
+            B =   getSignal(pixel, bit, bitoffset); pixel += 500;
+            C =   getSignal(pixel, bit, bitoffset); pixel += 500;
+            E =   getSignal(pixel, bit, bitoffset); pixel += 500;
+            OE =  getSignal(pixel, bit, bitoffset); pixel += 500;
+            CLK = getSignal(pixel, bit, bitoffset);
+
             lowp ivec3 data;
-            setBits(data, signal, signal, signal, signal, signal, signal, signal, signal, signal, signal, signal, signal, signal, signal);
+            setBits(data, D, LAT, A, B2, E, B, C, R2, G1, G2, CLK, OE, R1, B1);
             
             f_color = vec4(float(data.r) / 255.0, float(data.g) / 255.0, float(data.b) / 255.0, 1.0);            
         } """
