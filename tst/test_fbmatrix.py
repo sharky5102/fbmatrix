@@ -83,20 +83,6 @@ def ws2811_signal_bits(data, width, row=0):
 
     return bits
 
-def ws2811ToText(data, width, row=0):
-    line = list(scanlines(data, width * 4))[row]
-    pixels = np.frombuffer(line, dtype=[('r', 'B'), ('g', 'B'), ('b', 'B'), ('a', 'B')])
-    bit_width = width // 24
-
-    yield 'Scanline %d' % row
-
-    for bit in range(24):
-        start = bit * bit_width
-        end = (bit + 1) * bit_width
-        channel = pixels['r'][start:end]
-        signal = np.where(channel > 0, np.ubyte(ord('1')), np.ubyte(ord('_')))
-        yield('Bit %02d %s' % (bit, signal.tobytes().decode('utf-8')))
-
 def render_solid(color):
     gl.glClearColor(color[0], color[1], color[2], 1)
     gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
@@ -173,14 +159,14 @@ class TestWS2811(unittest.TestCase):
 
     def writeFrameData(self, filename, data):
         with open(filename, 'wt') as f:
-            for line in ws2811ToText(data, self.width):
+            for line in hub75ToText(data, self.width):
                 f.write(line + '\n')
 
     def assertFrameData(self, filename, data):
         self.writeFrameData(filename + '.new', data)
 
         with open(filename, 'rt') as f:
-            self.assertEqual([line.rstrip() for line in f], list(ws2811ToText(data, self.width)))
+            self.assertEqual([line.rstrip() for line in f], list(hub75ToText(data, self.width)))
 
     def testWhiteSignalHasAllOneBits(self):
         self.assertSignalPattern((1, 1, 1), [1] * 24)
