@@ -11,6 +11,7 @@
 - HUB75: supports 12-bit BCM, 1920x32 @ 60fps [using 25Mhz clock rate] with a single channel, currently only 1/16 scan with "standard" driver chips, but it is trivial to support 1/32 and others.
 - WS281x: supports 8-bit PWM, 1024 pixels @ 60fps [800Kbit mode].
 - WS281x: supports arbitrary pixel layout by providing a JSON file with pixel coordinates
+- Provides fbmserve.py for selecting GLSL fragment shader effects from a browser.
 - Audio port usable at the same time
 - Gamma correction of 2.2 applied
 - Provides simple fbmplay.py video player to play videos (including audio), which supports many videoformats due to the use of the ffpyplayer library. 
@@ -157,3 +158,27 @@ To play a video, use the same procedure as for HUB75 to play a video, except
 add the --display parameter:
 
     ./fbmplay --display ws2811 video.mp4
+
+### Serving shader effects
+
+`fbmserve.py` runs the normal FBMatrix renderer and starts a small HTTP server
+for selecting GLSL fragment shader effects with a live WebGL2 preview:
+
+    ./fbmserve.py --emulate --port 8080
+
+Add `--autoplay --autoplay-interval 20` to switch randomly between effects
+every 20 seconds. Autoplay is handled server-side, so it continues even when
+the browser UI is closed.
+
+`fbmserve.py` renders effects into a 4x source framebuffer by default before
+sampling them down to the LEDs. Use `--source-scale`, `--source-columns` or
+`--source-rows` to tune the source resolution.
+
+The browser UI is served from `web/`, and effects are loaded from `effects/`.
+Effects use a Shadertoy-style fragment entry point:
+
+    void mainImage(out vec4 fragColor, in vec2 fragCoord)
+
+The renderer provides `iTime`, `iResolution`, `iHue` and `iBrightness`
+uniforms. The usual output flags such as `--display`, `--layout`, `--emulate`,
+`--preview` and `--raw` are shared with `fbmtest.py` and `fbmplay.py`.

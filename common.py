@@ -7,7 +7,10 @@ import ledlayout
 
 def add_args(parser):
     parser.add_argument('--display', default='hub75e', choices=['hub75e', 'ws2811'], help='Output display type')
-    parser.add_argument('--supersample', type=float, default=3, help='Texture LOD used for output pixel sampling')
+    parser.add_argument('--supersample', type=float, default=3, help='Mip level used when sampling the source framebuffer for LED output')
+    parser.add_argument('--source-scale', type=float, default=1, help='Scale factor for the source framebuffer resolution')
+    parser.add_argument('--source-columns', type=int, default=None, help='Source framebuffer columns. Overrides --source-scale width')
+    parser.add_argument('--source-rows', type=int, default=None, help='Source framebuffer rows. Overrides --source-scale height')
     parser.add_argument('--emulate', action='store_true', help='Render display emulation')
     parser.add_argument('--preview', action='store_true', help='Preview the source framebuffer')
     parser.add_argument('--raw', action='store_true', help='Use a windowed raw framebuffer')
@@ -46,6 +49,16 @@ def renderer_from_args(args, preserve_source_modes=False):
     if args.display == 'ws2811' or args.emulate:
         layout = load_layout(args.layout, preserve_source_modes=preserve_source_modes)
 
+    if args.source_scale <= 0:
+        raise RuntimeError('--source-scale must be greater than zero')
+    if args.source_columns is not None and args.source_columns <= 0:
+        raise RuntimeError('--source-columns must be greater than zero')
+    if args.source_rows is not None and args.source_rows <= 0:
+        raise RuntimeError('--source-rows must be greater than zero')
+
+    source_columns = args.source_columns or max(1, int(args.columns * args.source_scale))
+    source_rows = args.source_rows or max(1, int(args.rows * args.source_scale))
+
     return fbmatrix.renderer(
         emulate=args.emulate,
         preview=args.preview,
@@ -53,6 +66,8 @@ def renderer_from_args(args, preserve_source_modes=False):
         display=args.display,
         rows=args.rows,
         columns=args.columns,
+        source_rows=source_rows,
+        source_columns=source_columns,
         supersample=args.supersample,
         order=args.order,
         oe=args.oe,

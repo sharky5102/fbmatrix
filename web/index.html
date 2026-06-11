@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fbmserve</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>fbmserve</h1>
+        <p id="status">Connecting</p>
+      </div>
+      <div class="signal" id="signal"></div>
+    </header>
+
+    <section class="workspace">
+      <nav class="effects" id="effects" aria-label="Effects"></nav>
+
+      <section class="panel">
+        <div class="preview" id="preview">
+          <canvas id="swatch" width="320" height="180"></canvas>
+        </div>
+
+        <div class="controls">
+          <label>
+            <span>Hue</span>
+            <input id="hue" type="range" min="0" max="1" step="0.001" value="0">
+          </label>
+          <label>
+            <span>Brightness</span>
+            <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
+          </label>
+          <label class="check-row">
+            <input id="autoplay" type="checkbox">
+            <span>Autoplay</span>
+          </label>
+          <label>
+            <span>Interval seconds</span>
+            <input id="autoplay-interval" type="number" min="1" max="3600" step="1" value="30">
+          </label>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

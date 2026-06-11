@@ -119,6 +119,21 @@ class TestHub75(unittest.TestCase):
 
         self.assertFrameData('tst/data/hub75_fieldfirst_32x32_white.txt', data)
 
+    def testSourceFramebufferSize(self):
+        self.renderer = fbmatrix.renderer(source_columns=64, source_rows=48)
+
+        self.assertEqual(64, self.renderer.mainfbo.width)
+        self.assertEqual(48, self.renderer.mainfbo.height)
+
+    def testSourceFramebufferUsesMipmaps(self):
+        self.renderer = fbmatrix.renderer(source_columns=64, source_rows=64)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.renderer.mainfbo.getTexture())
+
+        self.assertEqual(
+            gl.GL_LINEAR_MIPMAP_LINEAR,
+            gl.glGetTexParameteriv(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER),
+        )
+
 class TestWS2811(unittest.TestCase):
     height = 500
     width = 840
@@ -196,4 +211,3 @@ class TestLayout(unittest.TestCase):
             self.assertEqual(common.load_layout(filename, preserve_source_modes=True), [(0.0, 0.0, 0.0, 2)])
         finally:
             os.unlink(filename)
-

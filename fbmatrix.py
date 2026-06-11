@@ -17,13 +17,31 @@ def signal_handler(sig, frame):
 global_init = False
 
 class renderer(object):
-    def __init__(self, emulate=False, preview=False, raw=False, display='hub75e', rows=32, columns=32, supersample=3, order='line-first', interpolate=True, oe='normal', extract='bcm', layout=None):
+    def __init__(
+        self,
+        emulate=False,
+        preview=False,
+        raw=False,
+        display='hub75e',
+        rows=32,
+        columns=32,
+        source_rows=None,
+        source_columns=None,
+        supersample=3,
+        order='line-first',
+        interpolate=True,
+        oe='normal',
+        extract='bcm',
+        layout=None,
+    ):
         self.emulate = emulate
         self.preview = preview
         self.raw = raw
         self.displaytype = display
         self.rows = rows
         self.columns = columns
+        self.source_rows = source_rows or rows
+        self.source_columns = source_columns or columns
         self.supersample = supersample
         self.order = order
         self.interpolate = interpolate
@@ -100,7 +118,12 @@ class renderer(object):
         glut.glutKeyboardFunc(lambda k,x,y: self.keyboard(k,x,y))
 
         # Primary offscreen framebuffer
-        self.mainfbo = fbo.FBO(self.columns, 32,  mag_filter = gl.GL_NEAREST, min_filter = gl.GL_NEAREST)
+        self.mainfbo = fbo.FBO(
+            self.source_columns,
+            self.source_rows,
+            mag_filter=gl.GL_NEAREST,
+            min_filter=gl.GL_LINEAR_MIPMAP_LINEAR,
+        )
 
         if self.displaytype == 'ws2811':
             if self.layout is None:
@@ -120,7 +143,7 @@ class renderer(object):
         if self.emulate:
             if self.layout is None:
                 raise RuntimeError('Emulation requires a layout argument')
-            self.tree = assembly.tree.tree(self.layout)
+            self.tree = assembly.tree.tree(self.layout, supersample=self.supersample)
             self.tree.setTexture(self.mainfbo.getTexture())
 
         # Render

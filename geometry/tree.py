@@ -27,6 +27,7 @@ class tree(geometry.base):
     fragment_code = """
         uniform sampler2D tex;
         uniform sampler2D lamptex;
+        uniform highp float supersample;
         out highp vec4 f_color;
         in highp vec2 v_texcoor;
         in highp float v_id;
@@ -45,7 +46,7 @@ class tree(geometry.base):
                 t = vec3(0.0, 1.0, 0.0);
             } else {
                 highp vec2 lamppos = lamp.xy * vec2(0.5,0.5) + vec2(.5,.5);
-                t = textureLod(tex, lamppos, 0.0).rgb;
+                t = textureLod(tex, lamppos, supersample).rgb;
             }
 			
             f_color = vec4(t, 1.0);
@@ -53,9 +54,10 @@ class tree(geometry.base):
         
     attributes = { 'position' : 3, 'id' : 1 }
         
-    def __init__(self, jsondata):
+    def __init__(self, jsondata, supersample=0):
         self.lamps = ledlayout.require_xyzc_layout(jsondata)
         self.tex = 0
+        self.supersample = supersample
 
         # Present the lamp locations as a 1d texture
         self.mapwidth = pow(2, math.ceil(math.log(len(self.lamps))/math.log(2)))
@@ -123,6 +125,9 @@ class tree(geometry.base):
         gl.glUniform1i(loc, 1)
         gl.glActiveTexture(gl.GL_TEXTURE1)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.lamptex)
+
+        loc = gl.glGetUniformLocation(self.program, "supersample")
+        gl.glUniform1f(loc, self.supersample)
         
         super(tree, self).draw()
 
