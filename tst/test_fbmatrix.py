@@ -1,11 +1,13 @@
 import sys
 import os
+import json
 import numpy as np
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
 import time
 import fbo
 import signal
+import subprocess
 import tempfile
 
 import common
@@ -175,6 +177,19 @@ class TestWS2811(unittest.TestCase):
         data = self.readFrameData((1, 1, 0), layout=layout)
         self.assertFrameData('tst/data/ws2811_multiple_universes.txt', data)
 
+    def testInactiveSourceModeRendersBlack(self):
+        layout = self.layout.copy()
+        layout[0] = [0.0, 0.0, 0.0, -1]
+        layout[500] = [0.0, 0.0, 0.0, -1]
+        layout[1000] = [0.0, 0.0, 0.0, -1]
+
+        data = self.readFrameData((1, 1, 1), layout=layout)
+        first_pixel = next(parseFrameData(data, self.width))
+
+        self.assertTrue(first_pixel['R1'].startswith('1111111____________________________'))
+        self.assertTrue(first_pixel['G1'].startswith('1111111____________________________'))
+        self.assertTrue(first_pixel['B1'].startswith('1111111____________________________'))
+
     def testEmulationAcceptsLayout(self):
         fbmatrix.renderer(display='ws2811', layout=self.layout, emulate=True)
 
@@ -189,16 +204,32 @@ class TestLayout(unittest.TestCase):
             ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 1.5]])
 
     def testLayoutSourceModeMustBeKnown(self):
-        with self.assertRaisesRegex(RuntimeError, '0, 1, 2 or 3'):
+        with self.assertRaisesRegex(RuntimeError, '-1, 0, 1, 2 or 3'):
             ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 4]])
 
-    def testLoadLayoutClearsSourceModesByDefault(self):
+    def testLayoutAcceptsInactiveSourceMode(self):
+        self.assertEqual(
+            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, -1]]),
+            [(0.0, 0.0, 0.0, -1)],
+        )
+
+    def testLoadLayoutClearsColorSourceModesByDefault(self):
         with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
             f.write('[[0, 0, 0, 2]]')
             filename = f.name
 
         try:
             self.assertEqual(common.load_layout(filename), [(0.0, 0.0, 0.0, 0)])
+        finally:
+            os.unlink(filename)
+
+    def testLoadLayoutPreservesInactiveSourceModeByDefault(self):
+        with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
+            f.write('[[0, 0, 0, -1]]')
+            filename = f.name
+
+        try:
+            self.assertEqual(common.load_layout(filename), [(0.0, 0.0, 0.0, -1)])
         finally:
             os.unlink(filename)
 
@@ -211,3 +242,69 @@ class TestLayout(unittest.TestCase):
             self.assertEqual(common.load_layout(filename, preserve_source_modes=True), [(0.0, 0.0, 0.0, 2)])
         finally:
             os.unlink(filename)
+
+
+class TestGenerateLayout(unittest.TestCase):
+    def runGenerator(self, *args):
+        script = os.path.abspath('generate-layout.py')
+        return subprocess.run(
+            [sys.executable, script] + list(args),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def testSquareLayoutRequiresExplicitType(self):
+        result = self.runGenerator('square', '--columns', '2', '--rows', '2')
+
+        self.assertEqual('', result.stderr)
+        self.assertEqual([
+            [-0.5, -0.5, 0, 1],
+            [0.5, -0.5, 0, 1],
+            [0.5, 0.5, 0, 2],
+            [-0.5, 0.5, 0, 2],
+        ], json.loads(result.stdout))
+
+    def testRadialLayoutGeneratesFixedSectionsWithInactiveHopsAndPadding(self):
+        result = self.runGenerator(
+            'radial',
+            '--width', '6',
+            '--height', '7',
+            '--led-distance', '0.1',
+            '--hub-radius', '0.2',
+            '--spokes', '52',
+            '--source-modes', 'framebuffer',
+        )
+
+        self.assertEqual('', result.stderr)
+        layout = json.loads(result.stdout)
+
+        self.assertEqual(8 * 250, len(layout))
+        self.assertTrue(all(len(lamp) == 4 for lamp in layout))
+        self.assertTrue(all(-1.0 <= lamp[0] <= 1.0 for lamp in layout))
+        self.assertTrue(all(-1.0 <= lamp[1] <= 1.0 for lamp in layout))
+        self.assertTrue(any(lamp[3] == -1 for lamp in layout))
+        self.assertTrue(any(lamp[3] == 0 for lamp in layout))
+
+        non_padding_points = [lamp for lamp in layout if lamp[:3] != [0.0, 0.0, 0]]
+        self.assertLessEqual(max(abs(lamp[0]) for lamp in non_padding_points), 6.0 / 7.0 + 1e-6)
+        self.assertAlmostEqual(1.0, max(abs(lamp[1]) for lamp in non_padding_points), places=6)
+
+        active_points = {(round(lamp[0], 6), round(lamp[1], 6)) for lamp in layout if lamp[3] == 0}
+        for x, y in active_points:
+            self.assertIn((round(-x, 6), y), active_points)
+            self.assertIn((x, round(-y, 6)), active_points)
+
+    def testRadialLayoutRequiresSpokesDivisibleByFour(self):
+        result = self.runGenerator(
+            'radial',
+            '--width', '6',
+            '--height', '7',
+            '--led-distance', '0.1',
+            '--hub-radius', '0.2',
+            '--spokes', '50',
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('divisible by 4', result.stderr)

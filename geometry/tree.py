@@ -38,7 +38,9 @@ class tree(geometry.base):
             int source_mode = int(lamp.w + 0.5);
             highp vec3 t;
 
-            if (source_mode == 1) {
+            if (lamp.w < -0.5) {
+                t = vec3(0.0, 0.0, 0.0);
+            } else if (source_mode == 1) {
                 t = vec3(1.0, 0.0, 0.0);
             } else if (source_mode == 2) {
                 t = vec3(0.0, 0.0, 1.0);

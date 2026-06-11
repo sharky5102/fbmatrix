@@ -36,7 +36,7 @@ def load_layout(filename, preserve_source_modes=False):
                 if preserve_source_modes:
                     return layout
 
-                return [(x, y, z, 0) for x, y, z, source_mode in layout]
+                return [(x, y, z, -1 if source_mode == -1 else 0) for x, y, z, source_mode in layout]
         except (UnicodeDecodeError, JSONDecodeError) as e:
             last_error = e
 

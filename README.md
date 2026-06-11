@@ -111,21 +111,24 @@ mode. In most cases, your layout will have the LEDs in a flat surface, so the
 z value (the third value of each pixel), will be 0.0. The source mode controls
 where the LED color comes from:
 
-- 0: sample the source framebuffer normally
-- 1: ignore the framebuffer and use red
-- 2: ignore the framebuffer and use blue
-- 3: ignore the framebuffer and use green
+- `-1`: inactive LED, always black
+- `0`: sample the source framebuffer normally
+- `1`: ignore the framebuffer and use red
+- `2`: ignore the framebuffer and use blue
+- `3`: ignore the framebuffer and use green
 
-The command-line tools clear source modes to 0 when loading a layout, except
-for `fbmtest layout-colors`. This lets one layout file contain diagnostic
-source modes for testing while still behaving normally in playback tools such
-as `fbmplay`.
+The command-line tools clear color source modes 1, 2 and 3 to 0 when loading a
+layout, except for `fbmtest layout-colors`. Inactive source mode -1 is
+preserved by all command-line tools, including `fbmtest`, `fbmplay` and
+`fbmserve`. This lets one layout file contain diagnostic source modes for
+testing while still marking bridge or spacer LEDs as always black during normal
+playback.
 
 Example contents for a 3-pixel ws281x string:
 
     [
       [ -1.0, 0.0, 0.0, 0 ],
-      [  0.0, 0.0, 0.0, 1 ],
+      [  0.0, 0.0, 0.0, -1 ],
       [  1.0, 0.0, 0.0, 0 ]
     ]
 
@@ -148,11 +151,33 @@ If you have a perfect matrix (for example, you have a ws281x matrix on a
 PCB), then you can use the generate-layout.py script to generate a
 layout.json file:
 
-    ./generate-layout.py --columns 64 --rows 16 > layout.json
+    ./generate-layout.py square --columns 64 --rows 16 > layout.json
 
 By default, the generated layout cycles row source modes through red, blue and
 green for `fbmtest layout-colors`. Use `--source-modes framebuffer` to write
 source mode 0 for every LED instead.
+
+`generate-layout.py` can also generate a radial serpentine layout for physical
+rectangles. Radial layouts divide the string into 8 fixed sections: two edge
+sections for each of the top-left, top-right, bottom-right and bottom-left
+quarters. Each section is padded to `--section-leds` LEDs, defaulting to 250.
+Padding LEDs and connector LEDs between spokes are written with source mode
+`-1`, so they remain inactive during playback.
+
+Physical radial layouts are normalized into the square `[-1, 1]` coordinate
+space without changing aspect ratio. The larger physical dimension reaches the
+square bounds; the smaller dimension is inset. For a 6 by 7 meter rectangle,
+the y coordinates reach `-1` and `1`, while x coordinates are constrained to
+about `-0.857` and `0.857`.
+
+For example, this generates a 6 by 7 meter radial layout with 10cm LED spacing,
+a 20cm central hub and 52 spokes:
+
+    ./generate-layout.py radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 52 --source-modes framebuffer > layout.json
+
+The spoke count must be divisible by 4. The generator calculates whether every
+section can fit in `--section-leds`; if not, it exits with the section that
+needs more LEDs.
 
 To play a video, use the same procedure as for HUB75 to play a video, except
 add the --display parameter:

@@ -13,8 +13,8 @@ def require_xyzc_layout(layout):
         if isinstance(c, bool) or int(c) != c:
             raise RuntimeError('Layout entry %d source mode must be an integer' % i)
 
-        if int(c) < 0 or int(c) > 3:
-            raise RuntimeError('Layout entry %d source mode must be 0, 1, 2 or 3' % i)
+        if int(c) < -1 or int(c) > 3:
+            raise RuntimeError('Layout entry %d source mode must be -1, 0, 1, 2 or 3' % i)
 
         normalized.append((float(x), float(y), float(z), int(c)))
 
