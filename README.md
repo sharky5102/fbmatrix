@@ -9,7 +9,8 @@
 - CPU usage relative to changes in the image; no change in image -> no CPU usage
 - Rendering either by uploading RGB uint data, or by using OpenGL
 - HUB75: supports 12-bit BCM, 1920x32 @ 60fps [using 25Mhz clock rate] with a single channel, currently only 1/16 scan with "standard" driver chips, but it is trivial to support 1/32 and others.
-- WS281x: supports 8-bit PWM, 1024 pixels @ 60fps [800Kbit mode].
+- WS281x: supports 8-bit PWM on up to 14 parallel strings of 500 pixels each
+  @ 60fps [800Kbit mode].
 - WS281x: supports arbitrary pixel layout by providing a JSON file with pixel coordinates
 - Provides fbmserve.py for selecting GLSL fragment shader effects from a browser.
 - Audio port usable at the same time
@@ -84,11 +85,11 @@ To use HUB75e, we use the following rendering method (assuming 1/16 scan RGB mat
 
 ### Using WS281x output
 FBMatrix also supports using WS281x "neopixel" LED strings. Currently, only
-a single output is supported. One way of physically connecting the LED
-string to your Pi is by using the RGB matrix bonnet, because it
+a 500-pixel universe can be driven from each output pin. One way of physically
+connecting the LED strings to your Pi is by using the RGB matrix bonnet, because it
 contains a 3.3v to 5.0v level shifter for all the output pins. In that case
-you simply connect one of the data pins of the 16-pin cable (for example,
-the R1 pin) to your data-in (Din) pin of the ws281x, and you'll have a
+you simply connect data pins of the 16-pin cable (for example, the R1 pin) to
+the data-in (Din) pins of your ws281x strings, and you'll have a
 working setup.
 
 You can also try to connect one of the GPIO outputs directly (eg GPIO4), but
@@ -103,7 +104,36 @@ To use this, you can use the same configuration as for HUB75 (see above),
 except that the resolution used by DPI should be different.  In this case,
 use the following configuration for timings:
 
-    dpi_timings=840 0 0 0 0 1024 0 0 50 0 0 0 0 60 0 27000000 6
+    dpi_timings=840 0 0 0 0 500 0 0 50 0 0 0 0 60 0 27000000 6
+
+This uses 500 active scanlines, one per LED in each universe, plus a 50-line
+vertical sync interval that provides the WS281x reset gap between frames.
+
+WS281x output is split into 500-pixel universes. A layout with up to 500 LEDs
+uses universe 0 only; a longer layout continues onto the next output pin every
+500 entries. For example, layout entries 0-499 are universe 0, entries 500-999
+are universe 1, and so on. If a physical string is shorter than 500 LEDs, pad
+the rest of that universe with inactive entries using source mode `-1` before
+starting the next string.
+
+The current WS281x universe-to-pin mapping is:
+
+| Universe | Layout entries | Bonnet/HUB75 pin | Raspberry Pi GPIO |
+| -------- | -------------- | ---------------- | ----------------- |
+| 0 | 0-499 | R1 | GPIO5 |
+| 1 | 500-999 | G1 | GPIO13 |
+| 2 | 1000-1499 | B1 | GPIO6 |
+| 3 | 1500-1999 | R2 | GPIO12 |
+| 4 | 2000-2499 | G2 | GPIO16 |
+| 5 | 2500-2999 | B2 | GPIO23 |
+| 6 | 3000-3499 | D | GPIO20 |
+| 7 | 3500-3999 | LAT/STB | GPIO21 |
+| 8 | 4000-4499 | A | GPIO22 |
+| 9 | 4500-4999 | B | GPIO26 |
+| 10 | 5000-5499 | C | GPIO27 |
+| 11 | 5500-5999 | E | GPIO24 |
+| 12 | 6000-6499 | OE | GPIO4 |
+| 13 | 6500-6999 | CLK | GPIO17 |
 
 Additionally, you will have to supply a layout to the renderer. The layout
 lists the position in 3d space of each of your LEDs plus an integer source
@@ -114,8 +144,8 @@ where the LED color comes from:
 - `-1`: inactive LED, always black
 - `0`: sample the source framebuffer normally
 - `1`: ignore the framebuffer and use red
-- `2`: ignore the framebuffer and use blue
-- `3`: ignore the framebuffer and use green
+- `2`: ignore the framebuffer and use green
+- `3`: ignore the framebuffer and use blue
 
 The command-line tools clear color source modes 1, 2 and 3 to 0 when loading a
 layout, except for `fbmtest layout-colors`. Inactive source mode -1 is
