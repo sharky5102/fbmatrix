@@ -209,6 +209,36 @@ The spoke count must be divisible by 4. The generator calculates whether every
 section can fit in `--section-leds`; if not, it exits with the section that
 needs more LEDs.
 
+For installations with two radial centers, `generate-layout.py` also supports
+`dual-radial`. This layout assumes a portrait rectangle with two hubs on the
+horizontal center line, separated by `--center-spacing`. The left and right
+regions are semicircular fans with fixed angular spacing. The middle region is
+filled by parallel vertical runs from the center line to the top and bottom
+edges, using spacing derived from the adjacent radial edge spacing.
+
+Dual radial layouts are split into four symmetric physical parts: top-left,
+top-right, bottom-right and bottom-left. Each part contains two fixed LED
+sections, so the generated layout has 8 sections total. Each section is padded
+to `--section-leds` LEDs, defaulting to 250. A section may continue from side
+fan runs into parallel center runs, and every section starts and ends either at
+a hub or on the center line. Connector and padding LEDs use source mode `-1`.
+
+For example, this generates a 4 by 5 meter dual radial layout with two hubs
+1.6 meters apart:
+
+    ./generate-layout.py dual-radial --width 4 --height 5 --led-distance 0.1 --hub-radius 0.2 --spokes 32 --center-spacing 1.6 --source-modes framebuffer > layout.json
+
+The dual radial spoke count is the total number of radial spokes across both
+semicircular regions and must be divisible by 4. When `--center-spacing 0` is
+used, `dual-radial` collapses to the normal `radial` generator.
+
+Use `--max-spoke-length` to cap LED-bearing run length in meters. This clips
+long spokes before placing LEDs, which is useful for trimming rectangle corners
+when a section would otherwise exceed `--section-leds`. For example, this keeps
+the longest runs in the 6 by 7 meter dual radial layout below 2.8 meters:
+
+    ./generate-layout.py dual-radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 52 --center-spacing 1.5 --max-spoke-length 2.8 --source-modes framebuffer > layout.json
+
 To play a video, use the same procedure as for HUB75 to play a video, except
 add the --display parameter:
 

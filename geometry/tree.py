@@ -46,6 +46,8 @@ class tree(geometry.base):
                 t = vec3(0.0, 0.0, 1.0);
             } else if (source_mode == 3) {
                 t = vec3(0.0, 1.0, 0.0);
+            } else if (source_mode == 4) {
+                t = vec3(1.0, 1.0, 1.0);
             } else {
                 highp vec2 lamppos = lamp.xy * vec2(0.5,0.5) + vec2(.5,.5);
                 t = textureLod(tex, lamppos, supersample).rgb;

@@ -95,6 +95,7 @@ class signalgenerator(geometry.base):
                 //  1 = red
                 //  2 = green
                 //  3 = blue
+                //  4 = white
 
 				highp vec4 lamp = texelFetch(lamptex, ivec2(pixel, 0), 0);
 				int source_mode = int(lamp.w + 0.5);
@@ -106,6 +107,8 @@ class signalgenerator(geometry.base):
 					t = vec3(0.0, 1.0, 0.0);
 				} else if (source_mode == 3) {
 					t = vec3(0.0, 0.0, 1.0);
+				} else if (source_mode == 4) {
+					t = vec3(1.0, 1.0, 1.0);
 				} else {
 					highp vec2 lamppos = lamp.xy * vec2(0.5,0.5) + vec2(.5,.5);
 					t = textureLod(tex, lamppos, supersample).rgb;
