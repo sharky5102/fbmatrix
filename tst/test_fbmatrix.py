@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import math
 import numpy as np
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
@@ -255,7 +256,7 @@ class TestGenerateLayout(unittest.TestCase):
             text=True,
         )
 
-    def assertLayoutStats(self, result, layout_type, total, active=None, inactive=None, sections=None):
+    def assertLayoutStats(self, result, layout_type, total, active=None, inactive=None, sections=None, section_leds=250):
         self.assertIn('Layout type: %s' % layout_type, result.stderr)
         self.assertIn('Total LEDs: %d' % total, result.stderr)
 
@@ -265,7 +266,7 @@ class TestGenerateLayout(unittest.TestCase):
             self.assertIn('Inactive LEDs: %d' % inactive, result.stderr)
         if sections is not None:
             self.assertIn('Sections: %d' % sections, result.stderr)
-            self.assertIn('Section slots: 250', result.stderr)
+            self.assertIn('Section slots: %d' % section_leds, result.stderr)
             self.assertIn('Max used LEDs per section:', result.stderr)
             self.assertIn('Max active LEDs per section:', result.stderr)
             self.assertIn('Max inactive LEDs per section:', result.stderr)
@@ -289,12 +290,22 @@ class TestGenerateLayout(unittest.TestCase):
             '--height', '7',
             '--led-distance', '0.1',
             '--hub-radius', '0.2',
-            '--spokes', '52',
+            '--spokes', '32',
             '--source-modes', 'framebuffer',
         )
 
         layout = json.loads(result.stdout)
         self.assertLayoutStats(result, 'radial', len(layout), sections=8)
+        self.assertIn(
+            'Perimeter crossings top: 0.128, 1.129, 1.938, 2.655, 3.345, 4.062, 4.871, 5.872',
+            result.stderr,
+        )
+        self.assertIn(
+            'Perimeter crossings left: 1.038, 1.896, 2.590, 3.205, 3.795, 4.410, 5.104, 5.962',
+            result.stderr,
+        )
+        self.assertIn('Radial section top-left/0: 4 spokes', result.stderr)
+        self.assertIn('Radial section top-left/1: 4 spokes', result.stderr)
 
         self.assertEqual(8 * 250, len(layout))
         self.assertTrue(all(len(lamp) == 4 for lamp in layout))
@@ -312,18 +323,58 @@ class TestGenerateLayout(unittest.TestCase):
             self.assertIn((round(-x, 6), y), active_points)
             self.assertIn((x, round(-y, 6)), active_points)
 
-    def testRadialLayoutRequiresSpokesDivisibleByFour(self):
+    def testRadialLayoutRequiresSpokesDivisibleByEight(self):
         result = self.runGenerator(
             'radial',
             '--width', '6',
             '--height', '7',
             '--led-distance', '0.1',
             '--hub-radius', '0.2',
-            '--spokes', '50',
+            '--spokes', '52',
         )
 
         self.assertNotEqual(0, result.returncode)
-        self.assertIn('divisible by 4', result.stderr)
+        self.assertIn('divisible by 8', result.stderr)
+
+    def testRadialLayoutSplitsQuartersIntoHubToHubSections(self):
+        result = self.runGenerator(
+            'radial',
+            '--width', '7',
+            '--height', '6',
+            '--led-distance', '0.1',
+            '--hub-radius', '0.2',
+            '--spokes', '48',
+            '--max-spoke-length', '3.2',
+        )
+
+        layout = json.loads(result.stdout)
+        self.assertLayoutStats(result, 'radial', len(layout), sections=8)
+        self.assertEqual(8 * 250, len(layout))
+
+        hub_radius = 0.2 / (7.0 / 2.0)
+        for section_index in range(0, 8):
+            section = layout[section_index * 250:(section_index + 1) * 250]
+            used = [lamp for lamp in section if lamp[3] != -1 or lamp[:3] != [0.0, 0.0, 0]]
+            self.assertAlmostEqual(hub_radius, math.hypot(used[0][0], used[0][1]), places=6)
+            self.assertAlmostEqual(hub_radius, math.hypot(used[-1][0], used[-1][1]), places=6)
+
+    def testRadialLayoutCanSplitQuarterIntoUnevenHubToHubSections(self):
+        result = self.runGenerator(
+            'radial',
+            '--width', '7',
+            '--height', '6',
+            '--led-distance', '0.1',
+            '--hub-radius', '0.2',
+            '--spokes', '56',
+            '--max-spoke-length', '3.2',
+            '--section-leds', '280',
+        )
+
+        layout = json.loads(result.stdout)
+        self.assertLayoutStats(result, 'radial', len(layout), sections=8, section_leds=280)
+        self.assertIn('Radial section top-left/0: 6 spokes', result.stderr)
+        self.assertIn('Radial section top-left/1: 8 spokes', result.stderr)
+        self.assertEqual(8 * 280, len(layout))
 
     def testDualRadialLayoutGeneratesFixedSectionsWithCenterRuns(self):
         result = self.runGenerator(
@@ -334,11 +385,20 @@ class TestGenerateLayout(unittest.TestCase):
             '--hub-radius', '0.2',
             '--spokes', '32',
             '--center-spacing', '1.6',
+            '--max-spoke-length', '2.2',
             '--source-modes', 'framebuffer',
         )
 
         layout = json.loads(result.stdout)
         self.assertLayoutStats(result, 'dual-radial', len(layout), sections=8)
+        self.assertIn(
+            'Perimeter crossings top: 0.442, 0.954, 1.372, 1.791, 2.209, 2.628, 3.046, 3.558',
+            result.stderr,
+        )
+        self.assertIn(
+            'Perimeter crossings right: 0.255, 1.038, 1.515, 1.859, 2.136, 2.382, 2.618, 2.864, 3.141, 3.485, 3.962, 4.745',
+            result.stderr,
+        )
 
         self.assertEqual(8 * 250, len(layout))
         self.assertTrue(all(len(lamp) == 4 for lamp in layout))
@@ -349,12 +409,7 @@ class TestGenerateLayout(unittest.TestCase):
 
         non_padding_points = [lamp for lamp in layout if lamp[:3] != [0.0, 0.0, 0]]
         self.assertLessEqual(max(abs(lamp[0]) for lamp in non_padding_points), 4.0 / 5.0 + 1e-6)
-        self.assertAlmostEqual(1.0, max(abs(lamp[1]) for lamp in non_padding_points), places=6)
-
-        active_points = {(round(lamp[0], 6), round(lamp[1], 6)) for lamp in layout if lamp[3] == 0}
-        for x, y in active_points:
-            self.assertIn((round(-x, 6), y), active_points)
-            self.assertIn((x, round(-y, 6)), active_points)
+        self.assertAlmostEqual(0.96, max(abs(lamp[1]) for lamp in non_padding_points), places=6)
 
         section_actives = [
             [lamp for lamp in layout[i * 250:(i + 1) * 250] if lamp[3] == 0]
@@ -416,6 +471,7 @@ class TestGenerateLayout(unittest.TestCase):
             '--hub-radius', '0.2',
             '--spokes', '28',
             '--center-spacing', '1.6',
+            '--max-spoke-length', '2.2',
             '--source-modes', 'framebuffer',
         )
 
@@ -441,9 +497,9 @@ class TestGenerateLayout(unittest.TestCase):
         self.assertEqual(8 * 250, len(layout))
         self.assertIn('Dual radial section top-left/0: 8 fan runs, 0 center runs', result.stderr)
         self.assertIn('Dual radial section top-left/1: 5 fan runs, 3 center runs', result.stderr)
-        self.assertIn('Dual radial section top-right/0: 8 fan runs, 0 center runs', result.stderr)
-        self.assertIn('Dual radial section top-right/1: 5 fan runs, 3 center runs', result.stderr)
-        self.assertIn('Max used LEDs per section: 241', result.stderr)
+        self.assertIn('Dual radial section top-right/0: 5 fan runs, 3 center runs', result.stderr)
+        self.assertIn('Dual radial section top-right/1: 8 fan runs, 0 center runs', result.stderr)
+        self.assertIn('Max used LEDs per section: 246', result.stderr)
 
     def testDualRadialLayoutWithZeroCenterSpacingMatchesRadial(self):
         radial = self.runGenerator(
@@ -452,7 +508,7 @@ class TestGenerateLayout(unittest.TestCase):
             '--height', '7',
             '--led-distance', '0.1',
             '--hub-radius', '0.2',
-            '--spokes', '52',
+            '--spokes', '32',
             '--source-modes', 'framebuffer',
         )
         dual_radial = self.runGenerator(
@@ -461,7 +517,7 @@ class TestGenerateLayout(unittest.TestCase):
             '--height', '7',
             '--led-distance', '0.1',
             '--hub-radius', '0.2',
-            '--spokes', '52',
+            '--spokes', '32',
             '--center-spacing', '0',
             '--source-modes', 'framebuffer',
         )

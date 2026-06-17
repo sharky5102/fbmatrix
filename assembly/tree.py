@@ -27,6 +27,7 @@ class tree():
         projection = pyrr.matrix44.create_perspective_projection(3, 1, 0.001, 10000)
         self.tree.setProjection(projection)
         self.tree.setModelView(M)
+        self.tree.setTime(t)
         self.tree.render()
         gl.glDisable(gl.GL_DEPTH_TEST)
 

@@ -48,6 +48,7 @@ class renderer(object):
         self.oe = oe
         self.extract = extract
         self.layout = layout
+        self.starttime = time.time()
         self.init()
             
     def clear(self):   
@@ -69,7 +70,7 @@ class renderer(object):
             gl.glClear(gl.GL_COLOR_BUFFER_BIT| gl.GL_DEPTH_BUFFER_BIT)
             
             gl.glViewport(0, 0, int(self.screenWidth/2), self.screenHeight)
-            self.tree.render(0)
+            self.tree.render(time.time() - self.starttime)
             
             gl.glViewport(int(self.screenWidth/2), 0, int(self.screenWidth/2), self.screenHeight)
             self.texquad.render()

@@ -188,11 +188,11 @@ green for `fbmtest layout-colors`. Use `--source-modes framebuffer` to write
 source mode 0 for every LED instead.
 
 `generate-layout.py` can also generate a radial serpentine layout for physical
-rectangles. Radial layouts divide the string into 8 fixed sections: two edge
-sections for each of the top-left, top-right, bottom-right and bottom-left
-quarters. Each section is padded to `--section-leds` LEDs, defaulting to 250.
-Padding LEDs and connector LEDs between spokes are written with source mode
-`-1`, so they remain inactive during playback.
+rectangles. Radial layouts divide the string into 8 fixed sections: two
+balanced even spoke groups for each of the top-left, top-right, bottom-right
+and bottom-left quarters. Each section is padded to `--section-leds` LEDs,
+defaulting to 250. Padding LEDs and connector LEDs between spokes are written
+with source mode `-1`, so they remain inactive during playback.
 
 Physical radial layouts are normalized into the square `[-1, 1]` coordinate
 space without changing aspect ratio. The larger physical dimension reaches the
@@ -201,13 +201,20 @@ the y coordinates reach `-1` and `1`, while x coordinates are constrained to
 about `-0.857` and `0.857`.
 
 For example, this generates a 6 by 7 meter radial layout with 10cm LED spacing,
-a 20cm central hub and 52 spokes:
+a 20cm central hub and 32 spokes:
 
-    ./generate-layout.py radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 52 --source-modes framebuffer > layout.json
+    ./generate-layout.py radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 32 --source-modes framebuffer > layout.json
 
-The spoke count must be divisible by 4. The generator calculates whether every
-section can fit in `--section-leds`; if not, it exits with the section that
-needs more LEDs.
+The spoke count must be divisible by 8, so each quarter has an even number of
+spokes. The generator splits each quarter into two even sections, such as 6/8
+for a 14-spoke quarter, so every section starts and ends at the hub. The
+generator calculates whether every section can fit in `--section-leds`; if not,
+it exits with the section that needs more LEDs.
+
+For radial and dual radial layouts, the generator also prints perimeter
+crossings to stderr for harness construction. Crossings are physical distances
+in meters along each edge: top and bottom are measured from the left edge, and
+left and right are measured from the bottom edge.
 
 For installations with two radial centers, `generate-layout.py` also supports
 `dual-radial`. This layout assumes a portrait rectangle with two hubs on the
@@ -230,7 +237,8 @@ For example, this generates a 4 by 5 meter dual radial layout with two hubs
 
 The dual radial spoke count is the total number of radial spokes across both
 semicircular regions and must be divisible by 4. When `--center-spacing 0` is
-used, `dual-radial` collapses to the normal `radial` generator.
+used, `dual-radial` collapses to the normal `radial` generator and uses its
+divisible-by-8 spoke requirement.
 
 Use `--max-spoke-length` to cap LED-bearing run length in meters. This clips
 long spokes before placing LEDs, which is useful for trimming rectangle corners

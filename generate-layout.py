@@ -83,6 +83,22 @@ def edge_name(x, y, width, height):
     raise RuntimeError('Spoke endpoint is not on a rectangle edge')
 
 
+def edge_crossing_position(edge, point, width, height):
+    x, y = point
+
+    if edge == 'top' or edge == 'bottom':
+        return x + (width / 2.0)
+
+    return y + (height / 2.0)
+
+
+def print_perimeter_crossings(crossings):
+    for edge in ('top', 'right', 'bottom', 'left'):
+        values = sorted(crossings[edge])
+        formatted = ', '.join('%.3f' % value for value in values)
+        print('Perimeter crossings %s: %s' % (edge, formatted), file=sys.stderr)
+
+
 def quarter_name(x, y):
     if x >= 0 and y >= 0:
         return 'top-right'
@@ -186,8 +202,8 @@ def finish_fixed_section(section, section_leds, description):
 
 
 def generate_radial(width, height, led_distance, hub_radius, spokes, section_leds, source_modes, max_spoke_length=None):
-    if spokes % 4 != 0:
-        raise RuntimeError('Radial layout requires --spokes to be divisible by 4')
+    if spokes % 8 != 0:
+        raise RuntimeError('Radial layout requires --spokes to be divisible by 8')
     if width <= 0 or height <= 0:
         raise RuntimeError('Radial layout requires positive --width and --height')
     if led_distance <= 0:
@@ -209,6 +225,7 @@ def generate_radial(width, height, led_distance, hub_radius, spokes, section_led
         if edge_distance <= hub_radius:
             raise RuntimeError('Hub radius reaches beyond spoke %d' % i)
 
+        perimeter_point = (edge_x, edge_y)
         original_edge = edge_name(edge_x, edge_y, width, height)
         hub_x = math.cos(angle) * hub_radius
         hub_y = math.sin(angle) * hub_radius
@@ -224,55 +241,83 @@ def generate_radial(width, height, led_distance, hub_radius, spokes, section_led
             'edge': original_edge,
             'quarter': quarter_name(edge_x, edge_y),
             'edge_point': (edge_x, edge_y),
+            'perimeter_point': perimeter_point,
             'hub_point': (hub_x, hub_y),
             'edge_distance': edge_distance,
         })
 
-    section_order = [
-        ('top-left', 'left'),
-        ('top-left', 'top'),
-        ('top-right', 'top'),
-        ('top-right', 'right'),
-        ('bottom-right', 'right'),
-        ('bottom-right', 'bottom'),
-        ('bottom-left', 'bottom'),
-        ('bottom-left', 'left'),
+    print_perimeter_crossings({
+        edge: [
+            edge_crossing_position(edge, spoke['perimeter_point'], width, height)
+            for spoke in spoke_data
+            if spoke['edge'] == edge
+        ]
+        for edge in ('top', 'right', 'bottom', 'left')
+    })
+
+    quarter_order = [
+        'top-left',
+        'top-right',
+        'bottom-right',
+        'bottom-left',
     ]
 
     points = []
 
-    for section_index, (quarter, edge) in enumerate(section_order):
-        section_spokes = [
+    for quarter_index, quarter in enumerate(quarter_order):
+        quarter_spokes = [
             spoke
             for spoke in spoke_data
-            if spoke['quarter'] == quarter and spoke['edge'] == edge
+            if spoke['quarter'] == quarter
         ]
+        quarter_spokes.sort(key=lambda spoke: spoke['angle'], reverse=True)
+        if len(quarter_spokes) < 4:
+            raise RuntimeError(
+                'Radial quarter %s has %d spokes; quarters need at least 4 spokes to make two hub-to-hub sections'
+                % (quarter, len(quarter_spokes))
+            )
+        split = min(
+            range(2, len(quarter_spokes), 2),
+            key=lambda candidate: abs((len(quarter_spokes) - candidate) - candidate),
+        )
 
-        section_spokes.sort(key=lambda spoke: spoke['angle'], reverse=True)
-        section = []
+        for half_index, section_spokes in enumerate((quarter_spokes[:split], quarter_spokes[split:])):
+            section_index = (quarter_index * 2) + half_index
+            if len(section_spokes) % 2:
+                raise RuntimeError(
+                    'Radial section %s/%d has %d spokes; sections must have an even number of spokes to start and end at the hub'
+                    % (quarter, half_index, len(section_spokes))
+                )
 
-        for spoke_index, spoke in enumerate(section_spokes):
-            outward = spoke_index % 2 == 0
-            mode = source_mode(source_modes, section_index)
-            section.extend(points_on_spoke(
-                spoke['angle'],
-                spoke['edge_distance'],
-                hub_radius,
-                led_distance,
-                outward,
-                mode,
-                width,
-                height,
-            ))
+            section = []
 
-            if spoke_index + 1 < len(section_spokes):
-                current_end = spoke['edge_point'] if outward else spoke['hub_point']
-                next_spoke = section_spokes[spoke_index + 1]
-                next_outward = (spoke_index + 1) % 2 == 0
-                next_start = next_spoke['hub_point'] if next_outward else next_spoke['edge_point']
-                section.extend(inactive_hop_points(current_end, next_start, led_distance, width, height))
+            for spoke_index, spoke in enumerate(section_spokes):
+                outward = spoke_index % 2 == 0
+                mode = source_mode(source_modes, section_index)
+                section.extend(points_on_spoke(
+                    spoke['angle'],
+                    spoke['edge_distance'],
+                    hub_radius,
+                    led_distance,
+                    outward,
+                    mode,
+                    width,
+                    height,
+                ))
 
-        points.extend(finish_fixed_section(section, section_leds, 'Radial section %s/%s' % (quarter, edge)))
+                if spoke_index + 1 < len(section_spokes):
+                    current_end = spoke['edge_point'] if outward else spoke['hub_point']
+                    next_spoke = section_spokes[spoke_index + 1]
+                    next_outward = (spoke_index + 1) % 2 == 0
+                    next_start = next_spoke['hub_point'] if next_outward else next_spoke['edge_point']
+                    section.extend(inactive_hop_points(current_end, next_start, led_distance, width, height))
+
+            print(
+                'Radial section %s/%d: %d spokes, %d used LEDs'
+                % (quarter, half_index, len(section_spokes), len(section)),
+                file=sys.stderr,
+            )
+            points.extend(finish_fixed_section(section, section_leds, 'Radial section %s/%d' % (quarter, half_index)))
 
     return points
 
@@ -434,6 +479,7 @@ def generate_dual_radial(
                 'kind': 'fan',
                 'edge': edge_name(edge_x, edge_y, width, height),
                 'edge_point': (edge_x, edge_y),
+                'perimeter_point': (edge_x, edge_y),
                 'start': start,
                 'end': end,
             }
@@ -472,10 +518,15 @@ def generate_dual_radial(
     center_right_xs = center_xs[center_count // 2:]
 
     def center_run(x, y):
+        edge = 'top' if y > 0 else 'bottom'
+        max_center_length = None if max_spoke_length is None else max_spoke_length + hub_radius
         return {
             'kind': 'center',
+            'edge': edge,
+            'edge_point': (x, y),
+            'perimeter_point': (x, y),
             'start': (x, 0.0),
-            'end': clipped_endpoint((x, 0.0), (x, y), max_spoke_length + hub_radius),
+            'end': clipped_endpoint((x, 0.0), (x, y), max_center_length),
         }
 
     part_specs = [
@@ -500,6 +551,19 @@ def generate_dual_radial(
             + list(reversed(spoke_sets['left-bottom'])),
         ),
     ]
+
+    all_runs = []
+    for _part_name, runs in part_specs:
+        all_runs.extend(runs)
+
+    print_perimeter_crossings({
+        edge: [
+            edge_crossing_position(edge, run['perimeter_point'], width, height)
+            for run in all_runs
+            if run['edge'] == edge
+        ]
+        for edge in ('top', 'right', 'bottom', 'left')
+    })
 
     points = []
     for part_index, (part_name, runs) in enumerate(part_specs):
