@@ -100,17 +100,29 @@ def render_layout_colors():
     bytearray.render()
 
 
+def render_white():
+    global bytearray
+    global matrix
+
+    width = matrix.source_columns
+    height = matrix.source_rows
+
+    bytearray.setRGB(bytes([255, 255, 255]) * width * height, width, height)
+    bytearray.render()
+
+
 parser = argparse.ArgumentParser(description='Amazing WS2811 VGA driver')
 common.add_args(parser)
 
-parser.add_argument('type', help='Test pattern. One of: gradient, contrast, tear, layout-colors')
+parser.add_argument('type', help='Test pattern. One of: gradient, contrast, tear, layout-colors, white')
 parser.add_argument('--channel', default='all', help='Test pattern color if applicable. One of red, green, blue or all')
 
 patterns = {
   'contrast' : render_contrast,
   'gradient' : render_gradient,
   'tear': render_tear,
-  'layout-colors': render_layout_colors
+  'layout-colors': render_layout_colors,
+  'white': render_white
 }
 
 args = parser.parse_args()
