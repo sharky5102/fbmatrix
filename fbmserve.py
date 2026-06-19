@@ -15,13 +15,22 @@ import shader_effect
 
 
 class AppState:
-    def __init__(self, effect, hue=0.0, brightness=1.0, autoplay=False, autoplay_interval=30.0):
+    def __init__(
+        self,
+        effect,
+        hue=0.0,
+        brightness=1.0,
+        autoplay=False,
+        autoplay_interval=30.0,
+        autoplay_effects=None,
+    ):
         self.lock = threading.Lock()
         self.effect = effect
         self.hue = hue
         self.brightness = brightness
         self.autoplay = autoplay
         self.autoplay_interval = autoplay_interval
+        self.autoplay_effects = autoplay_effects or []
         self.error = None
 
     def snapshot(self):
@@ -32,6 +41,7 @@ class AppState:
                 'brightness': self.brightness,
                 'autoplay': self.autoplay,
                 'autoplay_interval': self.autoplay_interval,
+                'autoplay_effects': list(self.autoplay_effects),
                 'error': self.error,
             }
 
@@ -84,7 +94,12 @@ class EffectRenderer:
 
             if command['type'] == 'set_state':
                 self.state.update(**command['values'])
-                if any(key in command['values'] for key in ('effect', 'autoplay', 'autoplay_interval')):
+                if any(key in command['values'] for key in (
+                    'effect',
+                    'autoplay',
+                    'autoplay_interval',
+                    'autoplay_effects',
+                )):
                     self.schedule_autoplay()
                 if 'effect' in command['values'] and command['values']['effect'] != self.failed_effect:
                     self.failed_effect = None
@@ -102,13 +117,19 @@ class EffectRenderer:
         if not effect_ids:
             return
 
-        choices = [effect_id for effect_id in effect_ids if effect_id != snapshot['effect']]
+        selected = set(snapshot['autoplay_effects'])
+        autoplay_effect_ids = [effect_id for effect_id in effect_ids if effect_id in selected]
+        if not autoplay_effect_ids:
+            self.schedule_autoplay(now=now)
+            return
+
+        choices = [effect_id for effect_id in autoplay_effect_ids if effect_id != snapshot['effect']]
         if choices:
             effect = random.choice(choices)
         else:
-            effect = effect_ids[0]
+            effect = autoplay_effect_ids[0]
 
-        self.state.update(effect=effect)
+        self.state.update(effect=effect, hue=random.random())
         self.failed_effect = None
         self.schedule_autoplay(now=now)
 
@@ -183,6 +204,21 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if 'autoplay_interval' in payload:
             values['autoplay_interval'] = clamp(float(payload['autoplay_interval']), 1.0, 3600.0)
+
+        if 'autoplay_effects' in payload:
+            if not isinstance(payload['autoplay_effects'], list):
+                raise ValueError('Expected autoplay_effects list')
+
+            available = {item['id'] for item in shader_effect.discover_effects(self.server.effects_dir)}
+            autoplay_effects = []
+            for effect in payload['autoplay_effects']:
+                effect = str(effect)
+                if effect not in available:
+                    raise ValueError('Unknown autoplay effect')
+                if effect not in autoplay_effects:
+                    autoplay_effects.append(effect)
+
+            values['autoplay_effects'] = autoplay_effects
 
         return values
 
@@ -299,6 +335,7 @@ def main():
         clamp(args.brightness, 0.0, 1.0),
         args.autoplay,
         clamp(args.autoplay_interval, 1.0, 3600.0),
+        [item['id'] for item in effects],
     )
     commands = queue.Queue()
 

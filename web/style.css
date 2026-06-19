@@ -81,7 +81,20 @@ p {
   gap: 8px;
 }
 
+.effect-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.effect-autoplay {
+  flex: 0 0 auto;
+}
+
 .effect-button {
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
   min-height: 48px;
   padding: 0 14px;
@@ -185,6 +198,10 @@ input[type="checkbox"] {
   .effects {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .effect-row {
+    gap: 8px;
   }
 
   .effect-button {

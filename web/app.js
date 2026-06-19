@@ -5,6 +5,7 @@ const state = {
   brightness: 1,
   autoplay: false,
   autoplay_interval: 30,
+  autoplay_effects: [],
   error: null,
 };
 
@@ -75,6 +76,17 @@ function renderEffects() {
   effectsEl.replaceChildren();
 
   for (const effect of state.effects) {
+    const row = document.createElement('div');
+    row.className = 'effect-row';
+    row.classList.toggle('active', effect.id === state.effect);
+
+    const checkbox = document.createElement('input');
+    checkbox.className = 'effect-autoplay';
+    checkbox.type = 'checkbox';
+    checkbox.checked = state.autoplay_effects.includes(effect.id);
+    checkbox.setAttribute('aria-label', `Use ${effect.name} in autoplay`);
+    checkbox.addEventListener('change', () => updateAutoplayEffect(effect.id, checkbox.checked));
+
     const button = document.createElement('button');
     button.className = 'effect-button';
     button.type = 'button';
@@ -82,7 +94,9 @@ function renderEffects() {
     button.dataset.effect = effect.id;
     button.classList.toggle('active', effect.id === state.effect);
     button.addEventListener('click', () => updateState({ effect: effect.id }));
-    effectsEl.appendChild(button);
+
+    row.append(checkbox, button);
+    effectsEl.appendChild(row);
   }
 }
 
@@ -135,6 +149,21 @@ async function updateState(values) {
   } catch (error) {
     setOnline(false, error.message);
   }
+}
+
+function updateAutoplayEffect(effectId, checked) {
+  const selected = new Set(state.autoplay_effects);
+  if (checked) {
+    selected.add(effectId);
+  } else {
+    selected.delete(effectId);
+  }
+
+  updateState({
+    autoplay_effects: state.effects
+      .map((effect) => effect.id)
+      .filter((id) => selected.has(id)),
+  });
 }
 
 async function refreshState() {
