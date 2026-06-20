@@ -237,6 +237,7 @@ def generate_radial(width, height, led_distance, hub_radius, spokes, section_led
             edge_y = math.sin(angle) * edge_distance
 
         spoke_data.append({
+            'index': i,
             'angle': angle,
             'edge': original_edge,
             'quarter': quarter_name(edge_x, edge_y),
@@ -293,7 +294,7 @@ def generate_radial(width, height, led_distance, hub_radius, spokes, section_led
 
             for spoke_index, spoke in enumerate(section_spokes):
                 outward = spoke_index % 2 == 0
-                mode = source_mode(source_modes, section_index)
+                mode = source_mode(source_modes, spoke['index'])
                 section.extend(points_on_spoke(
                     spoke['angle'],
                     spoke['edge_distance'],

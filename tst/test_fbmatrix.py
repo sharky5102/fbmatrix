@@ -323,6 +323,32 @@ class TestGenerateLayout(unittest.TestCase):
             self.assertIn((round(-x, 6), y), active_points)
             self.assertIn((x, round(-y, 6)), active_points)
 
+    def testRadialLayoutColorsSpokesInsteadOfSections(self):
+        result = self.runGenerator(
+            'radial',
+            '--width', '6',
+            '--height', '7',
+            '--led-distance', '0.1',
+            '--hub-radius', '0.2',
+            '--spokes', '32',
+        )
+
+        layout = json.loads(result.stdout)
+        first_section = layout[:250]
+        active_runs = []
+        current_mode = None
+
+        for lamp in first_section:
+            mode = lamp[3]
+            if mode in (1, 2, 3):
+                if mode != current_mode:
+                    active_runs.append(mode)
+                    current_mode = mode
+            else:
+                current_mode = None
+
+        self.assertEqual([3, 1, 2, 3], active_runs)
+
     def testRadialLayoutRequiresSpokesDivisibleByEight(self):
         result = self.runGenerator(
             'radial',
