@@ -1,16 +1,21 @@
-# FBMatrix: an RGB display library for Raspberry Pi 4
+# FBMatrix: a HUB75 and WS281x driver library for Raspberry Pi 4 and 5
+
+FBMatrix is a library and toolset to drive both HUB75 RGB matrix panels and ws2811 LED strings. FBMatrix first renders the target frame in memory and then drives the necessary outputs to render that frame on the LED device. All output signal processing is done by the V3D core in the raspberry pi, leaving the CPU free to do other things.
+
+This does require some specific DPI setup of the raspberry pi, depending on the output device, see below.
+
+Right now, FBMatrix:
+- Supports HUB75(e) RGB matrix displays up to 1920x32@60fps pixels with 12 BCM bitplanes
+- Supports WS281x RGB strings, up to 14 strings of 500 pixels, arbitrary positioning of the LEDs within a 2d field that the image is mapped to
 
 ### Features
-
-- Supports HUB75(e) RGB matrix displays
-- Supports WS281x RGB strings arranged as a display
 - Utilizes GPU and V3D framebuffer to form 24 synchronized data streams with clock rate up to 100s of Mhz (but most HUB75 displays are limited to 30Mhz)
-- Compatible with easy-to-obtain hardware (ADAFruit RGB bonnet)
+- Compatible with easy-to-obtain hardware (ADAFruit RGB bonnet), also for WS281x
 - CPU usage relative to changes in the image; no change in image -> no CPU usage
 - Rendering either by uploading RGB uint data, or by using OpenGL
 - HUB75: supports 12-bit BCM, 1920x32 @ 60fps [using 25Mhz clock rate] with a single channel, currently only 1/16 scan with "standard" driver chips, but it is trivial to support 1/32 and others.
-- WS281x: supports 8-bit PWM on up to 14 parallel strings of 500 pixels each
-  @ 60fps [800Kbit mode].
+- WS281x: supports 24-bit color up to 14 parallel strings of 500 pixels each
+  @ 60fps
 - WS281x: supports arbitrary pixel layout by providing a JSON file with pixel coordinates
 - Provides fbmserve.py for selecting GLSL fragment shader effects from a browser.
 - Audio port usable at the same time
