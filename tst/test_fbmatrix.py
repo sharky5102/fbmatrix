@@ -5,6 +5,7 @@ import math
 import numpy as np
 import OpenGL.GL as gl
 import OpenGL.GLUT as glut
+import queue
 import time
 import fbo
 import signal
@@ -13,11 +14,13 @@ import tempfile
 from types import SimpleNamespace
 
 import common
+import led_effect
 import displays.ws2811
 import displays.hub75e
 import geometry.simple
 import assembly.tree
 import fbmatrix
+import fbmserve
 import ledlayout
 
 import unittest
@@ -216,6 +219,93 @@ class TestWS2811(unittest.TestCase):
         self.assertEqual((0, 255, 0), (pixels[2]['r'], pixels[2]['g'], pixels[2]['b']))
         self.assertEqual((0, 0, 255), (pixels[3]['r'], pixels[3]['g'], pixels[3]['b']))
         self.assertEqual((0, 0, 0), (pixels[4]['r'], pixels[4]['g'], pixels[4]['b']))
+
+    def testLedBufferShaderCanIgnoreSourceFramebuffer(self):
+        layout = [
+            [0.0, 0.0, 0.0, 0],
+            [0.0, 0.0, 0.0, 0],
+        ]
+        effect = """
+            void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex, in int sourceMode)
+            {
+                ledColor = ledIndex < 0.5
+                    ? vec4(0.0, 1.0, 0.0, 1.0)
+                    : vec4(0.0, 0.0, 1.0, 1.0);
+            }
+        """
+        self.renderer = fbmatrix.renderer(display='ws2811', layout=layout)
+        self.renderer.ledbuffer.set_effect_source(effect)
+        screen = fbo.FBO(self.width, self.height)
+        with screen:
+            self.renderer.render = lambda: render_solid((1, 0, 0))
+            self.renderer.display()
+
+        with self.renderer.ledfbo:
+            data = gl.glReadPixels(0, 0, len(layout), 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+        pixels = np.frombuffer(data, dtype=[('r', 'B'), ('g', 'B'), ('b', 'B'), ('a', 'B')])
+
+        self.assertEqual((0, 255, 0), (pixels[0]['r'], pixels[0]['g'], pixels[0]['b']))
+        self.assertEqual((0, 0, 255), (pixels[1]['r'], pixels[1]['g'], pixels[1]['b']))
+
+    def testLedBufferStoresLinearColorBeforePhysicalGamma(self):
+        layout = [[0.0, 0.0, 0.0, 0]]
+        self.renderer = fbmatrix.renderer(display='ws2811', layout=layout)
+        screen = fbo.FBO(self.width, self.height)
+        with screen:
+            self.renderer.render = lambda: render_solid((0.5, 0.0, 0.0))
+            self.renderer.display()
+
+        with self.renderer.ledfbo:
+            data = gl.glReadPixels(0, 0, len(layout), 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+        pixel = np.frombuffer(data, dtype=[('r', 'B'), ('g', 'B'), ('b', 'B'), ('a', 'B')])[0]
+
+        self.assertGreater(pixel['r'], 120)
+        self.assertLess(pixel['r'], 136)
+        self.assertEqual(0, pixel['g'])
+        self.assertEqual(0, pixel['b'])
+
+    def testLedEffectsCompile(self):
+        self.renderer = fbmatrix.renderer(display='ws2811', layout=self.layout)
+
+        for effect in led_effect.discover_effects('led_effects'):
+            source = led_effect.load_effect_source('led_effects', effect['id'])
+            self.renderer.ledbuffer.set_effect_source(source)
+
+    def testDefaultLedEffectLoadsFromFile(self):
+        source = led_effect.load_effect_source('led_effects', 'default')
+        with open(os.path.join('led_effects', 'default.frag'), 'rt', encoding='utf-8') as f:
+            expected = f.read()
+
+        self.assertEqual(source, expected)
+
+    def testFbmserveLedEffectUpdatesLedBuffer(self):
+        layout = [
+            [0.0, 0.0, 0.0, 0],
+            [0.0, 0.0, 0.0, 0],
+            [0.0, 0.0, 0.0, 0],
+            [0.0, 0.0, 0.0, 0],
+        ]
+        self.renderer = fbmatrix.renderer(display='ws2811', layout=layout)
+        state = fbmserve.AppState('solid', led_effect_id='default', brightness=1.0)
+        commands = queue.Queue()
+        effect_renderer = fbmserve.EffectRenderer('effects', 'led_effects', [], self.renderer, state, commands)
+        screen = fbo.FBO(self.width, self.height)
+
+        with screen:
+            self.renderer.render = effect_renderer.render
+            self.renderer.display()
+        with self.renderer.ledfbo:
+            default_data = gl.glReadPixels(0, 0, len(layout), 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+        commands.put({'type': 'set_state', 'values': {'led_effect': 'twinkle'}})
+        with screen:
+            self.renderer.display()
+        with self.renderer.ledfbo:
+            twinkle_data = gl.glReadPixels(0, 0, len(layout), 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+        self.assertNotEqual(default_data, twinkle_data)
 
     def testPreviewUsesMainFbo(self):
         self.renderer = fbmatrix.renderer(display='ws2811', layout=self.layout, preview=True)

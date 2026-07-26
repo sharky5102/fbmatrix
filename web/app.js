@@ -1,6 +1,8 @@
 const state = {
   effects: [],
+  led_effects: [],
   effect: null,
+  led_effect: 'default',
   hue: 0,
   brightness: 1,
   autoplay: false,
@@ -19,6 +21,7 @@ const preview = {
 };
 
 const effectsEl = document.getElementById('effects');
+const ledEffectsEl = document.getElementById('led-effects');
 const hueEl = document.getElementById('hue');
 const brightnessEl = document.getElementById('brightness');
 const autoplayEl = document.getElementById('autoplay');
@@ -45,6 +48,7 @@ async function init() {
 
   try {
     state.effects = await request('/api/effects');
+    state.led_effects = await request('/api/led-effects');
     Object.assign(state, await request('/api/state'));
     renderControls();
     await loadPreviewEffect(state.effect);
@@ -100,6 +104,22 @@ function renderEffects() {
   }
 }
 
+function renderLedEffects() {
+  ledEffectsEl.replaceChildren();
+
+  for (const effect of state.led_effects) {
+    const button = document.createElement('button');
+    button.className = 'effect-button';
+    button.type = 'button';
+    button.textContent = effect.name;
+    button.dataset.effect = effect.id;
+    button.classList.toggle('active', effect.id === state.led_effect);
+    button.addEventListener('click', () => updateState({ led_effect: effect.id }));
+
+    ledEffectsEl.appendChild(button);
+  }
+}
+
 function renderControls() {
   hueEl.value = state.hue;
   brightnessEl.value = state.brightness;
@@ -108,6 +128,7 @@ function renderControls() {
     autoplayIntervalEl.value = Math.round(state.autoplay_interval);
   }
   renderEffects();
+  renderLedEffects();
 }
 
 function setOnline(online, message) {
@@ -127,6 +148,10 @@ function setOnline(online, message) {
 
 function currentStatus() {
   const effect = state.effects.find((item) => item.id === state.effect);
+  const ledEffect = state.led_effects.find((item) => item.id === state.led_effect);
+  if (effect && ledEffect) {
+    return `${effect.name} + ${ledEffect.name}`;
+  }
   return effect ? effect.name : 'Ready';
 }
 

@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
 import common
+import led_effect
 import shader_effect
 
 
@@ -18,6 +19,7 @@ class AppState:
     def __init__(
         self,
         effect,
+        led_effect_id='default',
         hue=0.0,
         brightness=1.0,
         autoplay=False,
@@ -26,6 +28,7 @@ class AppState:
     ):
         self.lock = threading.Lock()
         self.effect = effect
+        self.led_effect = led_effect_id
         self.hue = hue
         self.brightness = brightness
         self.autoplay = autoplay
@@ -37,6 +40,7 @@ class AppState:
         with self.lock:
             return {
                 'effect': self.effect,
+                'led_effect': self.led_effect,
                 'hue': self.hue,
                 'brightness': self.brightness,
                 'autoplay': self.autoplay,
@@ -52,11 +56,13 @@ class AppState:
 
 
 class EffectRenderer:
-    def __init__(self, effects_dir, effects, width, height, state, commands):
+    def __init__(self, effects_dir, led_effects_dir, effects, matrix, state, commands):
         self.effects_dir = effects_dir
+        self.led_effects_dir = led_effects_dir
         self.effects = effects
-        self.width = width
-        self.height = height
+        self.matrix = matrix
+        self.width = matrix.source_columns
+        self.height = matrix.source_rows
         self.state = state
         self.commands = commands
         self.started = time.monotonic()
@@ -64,6 +70,8 @@ class EffectRenderer:
         self.current_effect = None
         self.failed_effect = None
         self.quad = None
+        self.current_led_effect = None
+        self.failed_led_effect = None
         self.schedule_autoplay()
 
     def render(self):
@@ -74,8 +82,15 @@ class EffectRenderer:
         if snapshot['effect'] != self.current_effect and snapshot['effect'] != self.failed_effect:
             try:
                 self.load_effect(snapshot['effect'])
-            except RuntimeError as e:
+            except (RuntimeError, FileNotFoundError) as e:
                 self.failed_effect = snapshot['effect']
+                self.state.update(error=str(e))
+
+        if self.has_ledbuffer() and snapshot['led_effect'] != self.current_led_effect and snapshot['led_effect'] != self.failed_led_effect:
+            try:
+                self.load_led_effect(snapshot['led_effect'])
+            except (RuntimeError, FileNotFoundError) as e:
+                self.failed_led_effect = snapshot['led_effect']
                 self.state.update(error=str(e))
 
         if self.quad is None:
@@ -83,6 +98,8 @@ class EffectRenderer:
 
         now = time.monotonic() - self.started
         self.quad.set_params(now, snapshot['hue'], snapshot['brightness'])
+        if self.has_ledbuffer():
+            self.matrix.ledbuffer.set_params(now, snapshot['hue'], snapshot['brightness'])
         self.quad.render()
 
     def apply_commands(self):
@@ -103,6 +120,8 @@ class EffectRenderer:
                     self.schedule_autoplay()
                 if 'effect' in command['values'] and command['values']['effect'] != self.failed_effect:
                     self.failed_effect = None
+                if 'led_effect' in command['values'] and command['values']['led_effect'] != self.failed_led_effect:
+                    self.failed_led_effect = None
 
     def apply_autoplay(self):
         snapshot = self.state.snapshot()
@@ -145,6 +164,16 @@ class EffectRenderer:
         self.failed_effect = None
         self.state.update(error=None)
 
+    def load_led_effect(self, effect_id):
+        source = led_effect.load_effect_source(self.led_effects_dir, effect_id)
+        self.matrix.ledbuffer.set_effect_source(source)
+        self.current_led_effect = effect_id
+        self.failed_led_effect = None
+        self.state.update(error=None)
+
+    def has_ledbuffer(self):
+        return hasattr(self.matrix, 'ledbuffer')
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = 'fbmserve/0.1'
@@ -159,8 +188,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.write_json(shader_effect.discover_effects(self.server.effects_dir))
             return
 
+        if parsed.path == '/api/led-effects':
+            self.write_json(led_effect.discover_effects(self.server.led_effects_dir))
+            return
+
         if parsed.path.startswith('/api/effects/') and parsed.path.endswith('/source'):
             self.write_effect_source(parsed.path)
+            return
+
+        if parsed.path.startswith('/api/led-effects/') and parsed.path.endswith('/source'):
+            self.write_led_effect_source(parsed.path)
             return
 
         self.serve_static(parsed.path)
@@ -192,6 +229,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             if effect not in available:
                 raise ValueError('Unknown effect')
             values['effect'] = effect
+
+        if 'led_effect' in payload:
+            led_effect_id = str(payload['led_effect'])
+            available = {item['id'] for item in led_effect.discover_effects(self.server.led_effects_dir)}
+            if led_effect_id not in available:
+                raise ValueError('Unknown LED effect')
+            values['led_effect'] = led_effect_id
 
         if 'hue' in payload:
             values['hue'] = clamp(float(payload['hue']), 0.0, 1.0)
@@ -268,6 +312,26 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def write_led_effect_source(self, request_path):
+        parts = request_path.strip('/').split('/')
+        if len(parts) != 4:
+            self.send_error(404)
+            return
+
+        effect_id = parts[2]
+        try:
+            source = led_effect.load_effect_source(self.server.led_effects_dir, effect_id)
+        except (ValueError, FileNotFoundError):
+            self.send_error(404)
+            return
+
+        data = source.encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def write_json(self, payload, status=200):
         data = json.dumps(payload).encode('utf-8')
         self.send_response(status)
@@ -295,10 +359,11 @@ def parse_bool(value):
     raise ValueError('Expected boolean value')
 
 
-def create_server(host, port, web_dir, effects_dir, state, commands):
+def create_server(host, port, web_dir, effects_dir, led_effects_dir, state, commands):
     server = ThreadingHTTPServer((host, port), RequestHandler)
     server.web_dir = web_dir
     server.effects_dir = effects_dir
+    server.led_effects_dir = led_effects_dir
     server.app_state = state
     server.commands = commands
     return server
@@ -311,8 +376,10 @@ def main():
     parser.add_argument('--host', default='0.0.0.0', help='HTTP server bind address')
     parser.add_argument('--port', type=int, default=8080, help='HTTP server port')
     parser.add_argument('--effects-dir', default='effects', help='Directory containing .frag effects')
+    parser.add_argument('--led-effects-dir', default='led_effects', help='Directory containing per-LED .frag effects')
     parser.add_argument('--web-dir', default='web', help='Directory containing the web UI')
     parser.add_argument('--effect', default=None, help='Initial effect id')
+    parser.add_argument('--led-effect', default='default', help='Initial per-LED effect id')
     parser.add_argument('--hue', type=float, default=0.0, help='Initial hue value from 0.0 to 1.0')
     parser.add_argument('--brightness', type=float, default=1.0, help='Initial brightness from 0.0 to 1.0')
     parser.add_argument('--autoplay', action='store_true', help='Randomly switch effects on the server')
@@ -320,17 +387,22 @@ def main():
     args = parser.parse_args()
 
     effects_dir = os.path.abspath(args.effects_dir)
+    led_effects_dir = os.path.abspath(args.led_effects_dir)
     web_dir = os.path.abspath(args.web_dir)
     effects = shader_effect.discover_effects(effects_dir)
+    led_effects = led_effect.discover_effects(led_effects_dir)
     if not effects:
         raise RuntimeError('No effects found in %s' % effects_dir)
 
     effect = args.effect or effects[0]['id']
     if effect not in {item['id'] for item in effects}:
         raise RuntimeError('Unknown effect: %s' % effect)
+    if args.led_effect not in {item['id'] for item in led_effects}:
+        raise RuntimeError('Unknown LED effect: %s' % args.led_effect)
 
     state = AppState(
         effect,
+        args.led_effect,
         clamp(args.hue, 0.0, 1.0),
         clamp(args.brightness, 0.0, 1.0),
         args.autoplay,
@@ -339,13 +411,13 @@ def main():
     )
     commands = queue.Queue()
 
-    server = create_server(args.host, args.port, web_dir, effects_dir, state, commands)
+    server = create_server(args.host, args.port, web_dir, effects_dir, led_effects_dir, state, commands)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     print('fbmserve listening on http://%s:%d/' % (args.host, args.port))
 
     matrix = common.renderer_from_args(args)
-    renderer = EffectRenderer(effects_dir, effects, matrix.source_columns, matrix.source_rows, state, commands)
+    renderer = EffectRenderer(effects_dir, led_effects_dir, effects, matrix, state, commands)
     matrix.run(renderer.render)
 
 

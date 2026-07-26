@@ -280,3 +280,17 @@ Effects use a Shadertoy-style fragment entry point:
 The renderer provides `iTime`, `iResolution`, `iHue` and `iBrightness`
 uniforms. The usual output flags such as `--display`, `--layout`, `--emulate`,
 `--preview` and `--raw` are shared with `fbmtest.py` and `fbmplay.py`.
+
+For WS2811 output, `fbmserve.py` can also apply a per-LED shader after the
+source framebuffer has rendered and before the WS2811 pulse framebuffer is
+generated:
+
+    ./fbmserve.py --display ws2811 --led-effect twinkle
+
+LED effects are loaded from `led_effects/` and use this entry point:
+
+    void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex, in int sourceMode)
+
+The LED shader can call `defaultSource(ledPosition, sourceMode)` to preserve
+layout source modes and sample the underlying framebuffer, call
+`sampleSource(ledPosition)` directly, or ignore the source framebuffer.

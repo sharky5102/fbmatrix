@@ -87,6 +87,8 @@ class signalgenerator(geometry.base):
 				t = texelFetch(tex, ivec2(pixel, 0), 0).rgb;
 			}
 
+            t = pow(t, vec3(2.2));
+
 			int bitvalue;
 
 			if (bit < 8)
