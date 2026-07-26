@@ -10,6 +10,7 @@ import fbo
 import signal
 import subprocess
 import tempfile
+from types import SimpleNamespace
 
 import common
 import displays.ws2811
@@ -191,8 +192,73 @@ class TestWS2811(unittest.TestCase):
         self.assertTrue(first_pixel['G1'].startswith('1111111____________________________'))
         self.assertTrue(first_pixel['B1'].startswith('1111111____________________________'))
 
+    def testLedBufferAppliesSourceModes(self):
+        layout = [
+            [0.0, 0.0, 0.0, 0],
+            [0.0, 0.0, 0.0, 1],
+            [0.0, 0.0, 0.0, 2],
+            [0.0, 0.0, 0.0, 3],
+            [0.0, 0.0, 0.0, -1],
+        ]
+        self.renderer = fbmatrix.renderer(display='ws2811', layout=layout)
+        screen = fbo.FBO(self.width, self.height)
+        with screen:
+            self.renderer.render = lambda: render_solid((1, 0, 0))
+            self.renderer.display()
+
+        with self.renderer.ledfbo:
+            data = gl.glReadPixels(0, 0, len(layout), 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+        pixels = np.frombuffer(data, dtype=[('r', 'B'), ('g', 'B'), ('b', 'B'), ('a', 'B')])
+
+        self.assertEqual((255, 0, 0), (pixels[0]['r'], pixels[0]['g'], pixels[0]['b']))
+        self.assertEqual((255, 0, 0), (pixels[1]['r'], pixels[1]['g'], pixels[1]['b']))
+        self.assertEqual((0, 255, 0), (pixels[2]['r'], pixels[2]['g'], pixels[2]['b']))
+        self.assertEqual((0, 0, 255), (pixels[3]['r'], pixels[3]['g'], pixels[3]['b']))
+        self.assertEqual((0, 0, 0), (pixels[4]['r'], pixels[4]['g'], pixels[4]['b']))
+
+    def testPreviewUsesMainFbo(self):
+        self.renderer = fbmatrix.renderer(display='ws2811', layout=self.layout, preview=True)
+
+        self.assertEqual(self.renderer.mainfbo.getTexture(), self.renderer.texquad.tex)
+
     def testEmulationAcceptsLayout(self):
         fbmatrix.renderer(display='ws2811', layout=self.layout, emulate=True)
+
+    def testEmulationUsesLedBufferForTreeAndMainFboForQuad(self):
+        self.renderer = fbmatrix.renderer(display='ws2811', layout=self.layout, emulate=True)
+
+        self.assertEqual(self.renderer.mainfbo.getTexture(), self.renderer.texquad.tex)
+        self.assertEqual(self.renderer.ledfbo.getTexture(), self.renderer.tree.tree.tex)
+
+    def testCommandLineEmulationUsesWs2811LedBufferForTreeAndMainFboForQuad(self):
+        with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
+            json.dump(self.layout, f)
+            filename = f.name
+
+        try:
+            self.renderer = common.renderer_from_args(SimpleNamespace(
+                display='hub75e',
+                emulate=True,
+                preview=False,
+                raw=False,
+                layout=filename,
+                source_scale=1,
+                source_columns=None,
+                source_rows=None,
+                columns=32,
+                rows=32,
+                supersample=3,
+                order='line-first',
+                oe='normal',
+                extract='bcm',
+            ))
+        finally:
+            os.unlink(filename)
+
+        self.assertEqual('ws2811', self.renderer.displaytype)
+        self.assertEqual(self.renderer.mainfbo.getTexture(), self.renderer.texquad.tex)
+        self.assertEqual(self.renderer.ledfbo.getTexture(), self.renderer.tree.tree.tex)
 
 
 class TestLayout(unittest.TestCase):
@@ -205,8 +271,8 @@ class TestLayout(unittest.TestCase):
             ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 1.5]])
 
     def testLayoutSourceModeMustBeKnown(self):
-        with self.assertRaisesRegex(RuntimeError, '-1, 0, 1, 2 or 3'):
-            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 4]])
+        with self.assertRaisesRegex(RuntimeError, '-1, 0, 1, 2, 3 or 4'):
+            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 5]])
 
     def testLayoutAcceptsInactiveSourceMode(self):
         self.assertEqual(

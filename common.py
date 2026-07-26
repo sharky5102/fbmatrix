@@ -45,8 +45,9 @@ def load_layout(filename, preserve_source_modes=False):
 
 def renderer_from_args(args, preserve_source_modes=False):
     layout = None
+    display = 'ws2811' if args.emulate else args.display
 
-    if args.display == 'ws2811' or args.emulate:
+    if display == 'ws2811':
         layout = load_layout(args.layout, preserve_source_modes=preserve_source_modes)
 
     if args.source_scale <= 0:
@@ -63,7 +64,7 @@ def renderer_from_args(args, preserve_source_modes=False):
         emulate=args.emulate,
         preview=args.preview,
         raw=args.raw,
-        display=args.display,
+        display=display,
         rows=args.rows,
         columns=args.columns,
         source_rows=source_rows,

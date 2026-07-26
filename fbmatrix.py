@@ -7,6 +7,7 @@ import fbo
 import signal
 
 import displays.ws2811
+import displays.ws2811_ledbuffer
 import displays.hub75e
 import geometry.simple
 import assembly.tree
@@ -64,6 +65,13 @@ class renderer(object):
             self.render()
             
         gl.glMemoryBarrier(gl.GL_FRAMEBUFFER_BARRIER_BIT)
+
+        if self.displaytype == 'ws2811':
+            with self.ledfbo:
+                self.clear()
+                self.ledbuffer.render()
+
+            gl.glMemoryBarrier(gl.GL_FRAMEBUFFER_BARRIER_BIT)
             
         if self.emulate:
             gl.glClearColor(0, 0, 0, 0)    
@@ -129,8 +137,16 @@ class renderer(object):
         if self.displaytype == 'ws2811':
             if self.layout is None:
                 raise RuntimeError('WS2811 display requires a layout argument')
-            self.signalgenerator = displays.ws2811.signalgenerator(self.layout, supersample=self.supersample)
-            self.signalgenerator.setTexture(self.mainfbo.getTexture())
+            self.ledbuffer = displays.ws2811_ledbuffer.ledbuffer(self.layout, supersample=self.supersample)
+            self.ledbuffer.setTexture(self.mainfbo.getTexture())
+            self.ledfbo = fbo.FBO(
+                len(self.ledbuffer.lamps),
+                1,
+                mag_filter=gl.GL_NEAREST,
+                min_filter=gl.GL_NEAREST,
+            )
+            self.signalgenerator = displays.ws2811.signalgenerator(len(self.ledbuffer.lamps), supersample=self.supersample)
+            self.signalgenerator.setTexture(self.ledfbo.getTexture())
         elif self.displaytype == 'hub75e':
             self.signalgenerator = displays.hub75e.signalgenerator(columns=self.columns, rows=self.rows, supersample=self.supersample, order=self.order, oe=self.oe, extract=self.extract)
             self.signalgenerator.setTexture(self.mainfbo.getTexture())
@@ -145,7 +161,10 @@ class renderer(object):
             if self.layout is None:
                 raise RuntimeError('Emulation requires a layout argument')
             self.tree = assembly.tree.tree(self.layout, supersample=self.supersample)
-            self.tree.setTexture(self.mainfbo.getTexture())
+            if self.displaytype == 'ws2811':
+                self.tree.setTexture(self.ledfbo.getTexture())
+            else:
+                self.tree.setTexture(self.mainfbo.getTexture())
 
         # Render
         glut.glutSetCursor(glut.GLUT_CURSOR_NONE);
