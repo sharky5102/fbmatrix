@@ -20,20 +20,41 @@ class FBO:
 
         self.fbo = glGenFramebuffers(1)
         
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, self.fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, self.fbo);
         
-        glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, self.tex, 0);
-        
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.tex, 0);
+
+        # Check framebuffer completeness
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        if status != GL_FRAMEBUFFER_COMPLETE:
+            # Provide human-readable status when possible
+            status_map = {
+                GL_FRAMEBUFFER_UNDEFINED: 'UNDEFINED',
+                GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT: 'INCOMPLETE_ATTACHMENT',
+                GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT: 'MISSING_ATTACHMENT',
+                GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER: 'INCOMPLETE_DRAW_BUFFER',
+                GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER: 'INCOMPLETE_READ_BUFFER',
+                GL_FRAMEBUFFER_UNSUPPORTED: 'UNSUPPORTED',
+                GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE: 'INCOMPLETE_MULTISAMPLE',
+                GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS: 'INCOMPLETE_LAYER_TARGETS',
+            }
+            name = status_map.get(status, hex(status))
+            raise RuntimeError(f"Framebuffer incomplete: {name} (0x{status:X})")
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
         
     def __enter__(self):
         glPushAttrib(GL_VIEWPORT_BIT)
-        self.lastFB = glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, self.fbo);
+        # prefer GL_FRAMEBUFFER_BINDING for wider availability
+        try:
+            self.lastFB = glGetIntegerv(GL_FRAMEBUFFER_BINDING)
+        except Exception:
+            self.lastFB = glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)
+        glBindFramebuffer(GL_FRAMEBUFFER, self.fbo);
         glViewport(0, 0, self.width, self.height);
         
     def __exit__(self, type, value, traceback):
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, self.lastFB)
+        glBindFramebuffer(GL_FRAMEBUFFER, self.lastFB)
         glPopAttrib()
         
     def bind(self):

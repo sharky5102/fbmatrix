@@ -2,3 +2,4 @@ PyOpenGL
 numpy
 pyrr
 pytest
+cffi
