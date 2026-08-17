@@ -37,15 +37,17 @@ and networking should be configured and working.
 		
 	then select "Interfacing Options" and then "SSH"
 
-2. You need to enable the DPI display output on your Raspberry pi, by adding the following to your /boot/config.txt:
+2. Enable the KMS DPI output by adding the following to
+   `/boot/firmware/config.txt`:
 
-		dtoverlay=dpi24
-		enable_dpi_lcd=1
-		display_default_lcd=1
-		dpi_output_format=0x6f007
+   ```ini
+   [all]
+   dtoverlay=vc4-kms-dpi-generic,rgb888
+   ```
 
-	FBMatrix creates the KMS mode itself at startup. No framebuffer dimensions,
-	DPI group/mode, or `dpi_timings` setting is needed in the boot configuration.
+   This is the only boot configuration FBMatrix requires. It creates the KMS
+   mode itself at startup, so no framebuffer dimensions, DPI group/mode, or
+   `dpi_timings` setting is needed.
 
 3. Power off the pi, and attach the RGB bonnet and RGB display to the bonnet. Make sure the RGB matrix also has power.
 
