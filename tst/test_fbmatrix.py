@@ -147,7 +147,7 @@ class TestHub75(unittest.TestCase):
 class TestWS2811(unittest.TestCase):
     height = 500
     width = 840
-    layout = [[0.0, 0.0, 0.0, 0]] * 7000
+    layout = [[[0.0, 0.0, 0.0, 0]] * 500 for _ in range(14)]
 
     def readFrameData(self, color, layout=None):
         self.renderer = fbmatrix.renderer(
@@ -176,22 +176,22 @@ class TestWS2811(unittest.TestCase):
         self.assertFrameData('tst/data/ws2811_red.txt', data)
 
     def testMultipleUniverses(self):
-        layout = self.layout.copy()
-        layout[0] = [0.0, 0.0, 0.0, 1] # red override
-        layout[500] = [0.0, 0.0, 0.0, 2] # green override
-        layout[1000] = [0.0, 0.0, 0.0, 3] # blue override
-        layout[1] = [0.0, 0.0, 0.0, 2] # green override
-        layout[501] = [0.0, 0.0, 0.0, 3] # blue override
-        layout[1001] = [0.0, 0.0, 0.0, 1] # red override
+        layout = [string.copy() for string in self.layout]
+        layout[0][0] = [0.0, 0.0, 0.0, 1] # red override
+        layout[1][0] = [0.0, 0.0, 0.0, 2] # green override
+        layout[2][0] = [0.0, 0.0, 0.0, 3] # blue override
+        layout[0][1] = [0.0, 0.0, 0.0, 2] # green override
+        layout[1][1] = [0.0, 0.0, 0.0, 3] # blue override
+        layout[2][1] = [0.0, 0.0, 0.0, 1] # red override
 
         data = self.readFrameData((1, 1, 0), layout=layout)
         self.assertFrameData('tst/data/ws2811_multiple_universes.txt', data)
 
     def testInactiveSourceModeRendersBlack(self):
-        layout = self.layout.copy()
-        layout[0] = [0.0, 0.0, 0.0, -1]
-        layout[500] = [0.0, 0.0, 0.0, -1]
-        layout[1000] = [0.0, 0.0, 0.0, -1]
+        layout = [string.copy() for string in self.layout]
+        layout[0][0] = [0.0, 0.0, 0.0, -1]
+        layout[1][0] = [0.0, 0.0, 0.0, -1]
+        layout[2][0] = [0.0, 0.0, 0.0, -1]
 
         data = self.readFrameData((1, 1, 1), layout=layout)
         first_pixel = next(parseFrameData(data, self.width))
@@ -207,6 +207,32 @@ class TestWS2811(unittest.TestCase):
 
 
 class TestLayout(unittest.TestCase):
+    def testStringLayoutRejectsStringsOver500Leds(self):
+        with self.assertRaisesRegex(RuntimeError, 'string 0 contains 501 LEDs'):
+            ledlayout.require_xyzc_string_layout(
+                [[[0.0, 0.0, 0.0, 0]] * 501])
+
+    def testStringLayoutPreservesStringBoundaries(self):
+        self.assertEqual(
+            ledlayout.require_xyzc_string_layout([
+                [[0, 0, 0, 0]],
+                [[1, 1, 0, -1], [2, 2, 0, 0]],
+            ]),
+            [
+                [(0.0, 0.0, 0.0, 0)],
+                [(1.0, 1.0, 0.0, -1), (2.0, 2.0, 0.0, 0)],
+            ],
+        )
+
+    def testStringLayoutAllowsEmptyStringsForPinSelection(self):
+        self.assertEqual(
+            ledlayout.require_xyzc_string_layout([
+                [],
+                [[1, 1, 0, 0]],
+            ]),
+            [[], [(1.0, 1.0, 0.0, 0)]],
+        )
+
     def testLayoutRequiresColorMarker(self):
         with self.assertRaisesRegex(RuntimeError, r'\[x, y, z, c\]'):
             ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0]])
@@ -227,31 +253,31 @@ class TestLayout(unittest.TestCase):
 
     def testLoadLayoutClearsColorSourceModesByDefault(self):
         with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
-            f.write('[[0, 0, 0, 2]]')
+            f.write('[[[0, 0, 0, 2]]]')
             filename = f.name
 
         try:
-            self.assertEqual(common.load_layout(filename), [(0.0, 0.0, 0.0, 0)])
+            self.assertEqual(common.load_layout(filename), [[(0.0, 0.0, 0.0, 0)]])
         finally:
             os.unlink(filename)
 
     def testLoadLayoutPreservesInactiveSourceModeByDefault(self):
         with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
-            f.write('[[0, 0, 0, -1]]')
+            f.write('[[[0, 0, 0, -1]]]')
             filename = f.name
 
         try:
-            self.assertEqual(common.load_layout(filename), [(0.0, 0.0, 0.0, -1)])
+            self.assertEqual(common.load_layout(filename), [[(0.0, 0.0, 0.0, -1)]])
         finally:
             os.unlink(filename)
 
     def testLoadLayoutCanPreserveSourceModes(self):
         with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
-            f.write('[[0, 0, 0, 2]]')
+            f.write('[[[0, 0, 0, 2]]]')
             filename = f.name
 
         try:
-            self.assertEqual(common.load_layout(filename, preserve_source_modes=True), [(0.0, 0.0, 0.0, 2)])
+            self.assertEqual(common.load_layout(filename, preserve_source_modes=True), [[(0.0, 0.0, 0.0, 2)]])
         finally:
             os.unlink(filename)
 
@@ -287,12 +313,12 @@ class TestGenerateLayout(unittest.TestCase):
 
         self.assertLayoutStats(result, 'square', 4, active=4, inactive=0)
         self.assertNotIn('Sections:', result.stderr)
-        self.assertEqual([
+        self.assertEqual([[
             [-0.5, -0.5, 0, 1],
             [0.5, -0.5, 0, 1],
             [0.5, 0.5, 0, 2],
             [-0.5, 0.5, 0, 2],
-        ], json.loads(result.stdout))
+        ]], json.loads(result.stdout))
 
     def testRadialLayoutGeneratesFixedSectionsWithInactiveHopsAndPadding(self):
         result = self.runGenerator(
@@ -305,7 +331,8 @@ class TestGenerateLayout(unittest.TestCase):
             '--source-modes', 'framebuffer',
         )
 
-        layout = json.loads(result.stdout)
+        strings = json.loads(result.stdout)
+        layout = [lamp for string in strings for lamp in string]
         self.assertLayoutStats(result, 'radial', len(layout), sections=8)
         self.assertIn(
             'Perimeter crossings top: 0.128, 1.129, 1.938, 2.655, 3.345, 4.062, 4.871, 5.872',
@@ -344,7 +371,8 @@ class TestGenerateLayout(unittest.TestCase):
             '--spokes', '32',
         )
 
-        layout = json.loads(result.stdout)
+        strings = json.loads(result.stdout)
+        layout = [lamp for string in strings for lamp in string]
         first_section = layout[:250]
         active_runs = []
         current_mode = None
@@ -384,7 +412,8 @@ class TestGenerateLayout(unittest.TestCase):
             '--max-spoke-length', '3.2',
         )
 
-        layout = json.loads(result.stdout)
+        strings = json.loads(result.stdout)
+        layout = [lamp for string in strings for lamp in string]
         self.assertLayoutStats(result, 'radial', len(layout), sections=8)
         self.assertEqual(8 * 250, len(layout))
 
@@ -407,7 +436,8 @@ class TestGenerateLayout(unittest.TestCase):
             '--section-leds', '280',
         )
 
-        layout = json.loads(result.stdout)
+        strings = json.loads(result.stdout)
+        layout = [lamp for string in strings for lamp in string]
         self.assertLayoutStats(result, 'radial', len(layout), sections=8, section_leds=280)
         self.assertIn('Radial section top-left/0: 6 spokes', result.stderr)
         self.assertIn('Radial section top-left/1: 8 spokes', result.stderr)
@@ -426,7 +456,8 @@ class TestGenerateLayout(unittest.TestCase):
             '--source-modes', 'framebuffer',
         )
 
-        layout = json.loads(result.stdout)
+        strings = json.loads(result.stdout)
+        layout = [lamp for string in strings for lamp in string]
         self.assertLayoutStats(result, 'dual-radial', len(layout), sections=8)
         self.assertIn(
             'Perimeter crossings top: 0.442, 0.954, 1.372, 1.791, 2.209, 2.628, 3.046, 3.558',
@@ -512,7 +543,8 @@ class TestGenerateLayout(unittest.TestCase):
             '--source-modes', 'framebuffer',
         )
 
-        layout = json.loads(result.stdout)
+        strings = json.loads(result.stdout)
+        layout = [lamp for string in strings for lamp in string]
         self.assertLayoutStats(result, 'dual-radial', len(layout), sections=8)
         self.assertEqual(8 * 250, len(layout))
 
@@ -529,7 +561,8 @@ class TestGenerateLayout(unittest.TestCase):
             '--source-modes', 'framebuffer',
         )
 
-        layout = json.loads(result.stdout)
+        strings = json.loads(result.stdout)
+        layout = [lamp for string in strings for lamp in string]
         self.assertLayoutStats(result, 'dual-radial', len(layout), sections=8)
         self.assertEqual(8 * 250, len(layout))
         self.assertIn('Dual radial section top-left/0: 8 fan runs, 0 center runs', result.stderr)

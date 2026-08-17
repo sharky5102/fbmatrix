@@ -726,7 +726,8 @@ def main():
         return 1
 
     print_layout_stats(args.type, points, args.section_leds if args.type != 'square' else None)
-    print(json.dumps(points))
+    strings = [points[i:i + 500] for i in range(0, len(points), 500)]
+    print(json.dumps(strings))
     return 0
 
 

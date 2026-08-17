@@ -177,7 +177,8 @@ class renderer(object):
             if self.layout is None:
                 raise RuntimeError('Emulation requires a layout argument')
             self.tree = assembly.tree.tree(
-                self.layout, supersample=self.supersample)
+                displays.ws2811.flatten_layout(self.layout),
+                supersample=self.supersample)
             self.tree.setTexture(self.mainfbo.getTexture())
 
     def init_glut(self):

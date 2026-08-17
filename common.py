@@ -32,11 +32,15 @@ def load_layout(filename, preserve_source_modes=False):
     for encoding in ('utf-8-sig', 'utf-16'):
         try:
             with open(filename, 'rt', encoding=encoding) as f:
-                layout = ledlayout.require_xyzc_layout(json.load(f))
+                layout = ledlayout.require_xyzc_string_layout(json.load(f))
                 if preserve_source_modes:
                     return layout
 
-                return [(x, y, z, -1 if source_mode == -1 else 0) for x, y, z, source_mode in layout]
+                return [
+                    [(x, y, z, -1 if source_mode == -1 else 0)
+                     for x, y, z, source_mode in string]
+                    for string in layout
+                ]
         except (UnicodeDecodeError, JSONDecodeError) as e:
             last_error = e
 

@@ -4,6 +4,15 @@ import OpenGL.GL as gl
 import numpy as np
 import ctypes
 
+MAX_LEDS_PER_STRING = 500
+MAX_STRINGS = 14
+
+
+def flatten_layout(layout):
+    return ledlayout.flatten_string_layout(
+        ledlayout.require_xyzc_string_layout(
+            layout, MAX_LEDS_PER_STRING, MAX_STRINGS))
+
 class signalgenerator(geometry.base):
     vertex_code = """
         uniform mat4 modelview;
@@ -23,7 +32,6 @@ class signalgenerator(geometry.base):
     fragment_code = """
         uniform sampler2D tex;
         uniform sampler2D lamptex;
-    	uniform int max_id;
         uniform highp float supersample;
 		
         out highp vec4 f_color;
@@ -82,12 +90,10 @@ class signalgenerator(geometry.base):
                       (B1 > 0 ? MASK_B1 : 0);
         }
         
-        int getSignal(int pixel, int bit, lowp float bitoffset) {
+        int getSignal(int string_number, int pixel, int bit, lowp float bitoffset) {
 			highp vec3 t;
-			
-			if (pixel > max_id) {
-				t = vec3(1.0, 1.0, 1.0);
-			} else {
+
+			{
                 // Override modes:
                 // -1 = inactive (black)
                 //  0 = normal (read from texture)
@@ -96,7 +102,7 @@ class signalgenerator(geometry.base):
                 //  3 = blue
                 //  4 = white
 
-				highp vec4 lamp = texelFetch(lamptex, ivec2(pixel, 0), 0);
+				highp vec4 lamp = texelFetch(lamptex, ivec2(pixel, string_number), 0);
 				int source_mode = int(lamp.w + 0.5);
 				if (lamp.w < -0.5) {
 					t = vec3(0.0, 0.0, 0.0);
@@ -148,20 +154,20 @@ class signalgenerator(geometry.base):
             lowp int R1, G1, B1, R2, G2, B2, D, LAT, A, B, C, E, OE, CLK;
             R1 = G1 = B1 = R2 = G2 = B2 = D = LAT = A = B = C = E = OE = CLK = 0;
 
-            R1 =  getSignal(pixel, bit, bitoffset); pixel += 500;
-            G1 =  getSignal(pixel, bit, bitoffset); pixel += 500;
-            B1 =  getSignal(pixel, bit, bitoffset); pixel += 500;
-            R2 =  getSignal(pixel, bit, bitoffset); pixel += 500;
-            G2 =  getSignal(pixel, bit, bitoffset); pixel += 500;
-            B2 =  getSignal(pixel, bit, bitoffset); pixel += 500;
-            D =   getSignal(pixel, bit, bitoffset); pixel += 500;
-            LAT = getSignal(pixel, bit, bitoffset); pixel += 500;
-            A =   getSignal(pixel, bit, bitoffset); pixel += 500;
-            B =   getSignal(pixel, bit, bitoffset); pixel += 500;
-            C =   getSignal(pixel, bit, bitoffset); pixel += 500;
-            E =   getSignal(pixel, bit, bitoffset); pixel += 500;
-            OE =  getSignal(pixel, bit, bitoffset); pixel += 500;
-            CLK = getSignal(pixel, bit, bitoffset);
+            R1 =  getSignal(0,  pixel, bit, bitoffset);
+            G1 =  getSignal(1,  pixel, bit, bitoffset);
+            B1 =  getSignal(2,  pixel, bit, bitoffset);
+            R2 =  getSignal(3,  pixel, bit, bitoffset);
+            G2 =  getSignal(4,  pixel, bit, bitoffset);
+            B2 =  getSignal(5,  pixel, bit, bitoffset);
+            D =   getSignal(6,  pixel, bit, bitoffset);
+            LAT = getSignal(7,  pixel, bit, bitoffset);
+            A =   getSignal(8,  pixel, bit, bitoffset);
+            B =   getSignal(9,  pixel, bit, bitoffset);
+            C =   getSignal(10, pixel, bit, bitoffset);
+            E =   getSignal(11, pixel, bit, bitoffset);
+            OE =  getSignal(12, pixel, bit, bitoffset);
+            CLK = getSignal(13, pixel, bit, bitoffset);
 
             lowp ivec3 data;
             setBits(data, D, LAT, A, B2, E, B, C, R2, G1, G2, CLK, OE, R1, B1);
@@ -173,28 +179,34 @@ class signalgenerator(geometry.base):
     primitive = gl.GL_QUADS
 
     def __init__(self, layout, supersample):
-        self.lamps = ledlayout.require_xyzc_layout(layout)
+        self.strings = ledlayout.require_xyzc_string_layout(
+            layout, MAX_LEDS_PER_STRING, MAX_STRINGS)
+        self.lamps = ledlayout.flatten_string_layout(self.strings)
         self.tex = 0
         self.supersample = supersample
 
-        # Present the lamp locations as a single-row texture. Modern OpenGL
-        # supports non-power-of-two texture dimensions.
-        self.mapwidth = len(self.lamps)
+        # A row represents an output string and a column its LED number.
+        # Missing LEDs and unused hardware outputs are inactive.
+        self.mapwidth = MAX_LEDS_PER_STRING
+        self.mapheight = MAX_STRINGS
 
-        data = np.zeros(self.mapwidth, (np.float32, 4))
-        
-        for i in range(0, len(self.lamps)):
-            lamp = self.lamps[i]
-            data[i][0] = lamp[0];
-            data[i][1] = -lamp[1];
-            data[i][2] = lamp[2];
-            data[i][3] = lamp[3];
+        data = np.zeros((self.mapheight, self.mapwidth, 4), dtype=np.float32)
+        data[:, :, 3] = -1
+
+        for string_index, string in enumerate(self.strings):
+            for led_index, lamp in enumerate(string):
+                data[string_index][led_index][0] = lamp[0]
+                data[string_index][led_index][1] = -lamp[1]
+                data[string_index][led_index][2] = lamp[2]
+                data[string_index][led_index][3] = lamp[3]
         
         self.lamptex = gl.glGenTextures(1)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.lamptex)
         gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
         gl.glTexParameterf(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA16F, self.mapwidth, 1, 0, gl.GL_RGBA, gl.GL_FLOAT, data)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA16F,
+                        self.mapwidth, self.mapheight, 0,
+                        gl.GL_RGBA, gl.GL_FLOAT, data)
 
         super(signalgenerator, self).__init__()
 
@@ -215,9 +227,6 @@ class signalgenerator(geometry.base):
         gl.glUniform1i(loc, 1)
         gl.glActiveTexture(gl.GL_TEXTURE1)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.lamptex)
-
-        loc = gl.glGetUniformLocation(self.program, "max_id")
-        gl.glUniform1i(loc, len(self.lamps))
 
         loc = gl.glGetUniformLocation(self.program, "supersample")
         gl.glUniform1f(loc, self.supersample)

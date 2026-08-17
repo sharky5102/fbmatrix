@@ -114,31 +114,31 @@ use the following configuration for timings:
 This uses 500 active scanlines, one per LED in each universe, plus a 50-line
 vertical sync interval that provides the WS281x reset gap between frames.
 
-WS281x output is split into 500-pixel universes. A layout with up to 500 LEDs
-uses universe 0 only; a longer layout continues onto the next output pin every
-500 entries. For example, layout entries 0-499 are universe 0, entries 500-999
-are universe 1, and so on. If a physical string is shorter than 500 LEDs, pad
-the rest of that universe with inactive entries using source mode `-1` before
-starting the next string.
+The outer array in `layout.json` contains the output strings, and each string
+contains its LED positions in wire order. Strings can have different lengths,
+but each is currently limited to 500 LEDs. No padding is required. Up to 14
+strings are supported.
+An empty inner array leaves that output pin unused while retaining later string
+numbers.
 
 The current WS281x universe-to-pin mapping is:
 
-| Universe | Layout entries | Bonnet/HUB75 pin | Raspberry Pi GPIO |
-| -------- | -------------- | ---------------- | ----------------- |
-| 0 | 0-499 | R1 | GPIO5 |
-| 1 | 500-999 | G1 | GPIO13 |
-| 2 | 1000-1499 | B1 | GPIO6 |
-| 3 | 1500-1999 | R2 | GPIO12 |
-| 4 | 2000-2499 | G2 | GPIO16 |
-| 5 | 2500-2999 | B2 | GPIO23 |
-| 6 | 3000-3499 | D | GPIO20 |
-| 7 | 3500-3999 | LAT/STB | GPIO21 |
-| 8 | 4000-4499 | A | GPIO22 |
-| 9 | 4500-4999 | B | GPIO26 |
-| 10 | 5000-5499 | C | GPIO27 |
-| 11 | 5500-5999 | E | GPIO24 |
-| 12 | 6000-6499 | OE | GPIO4 |
-| 13 | 6500-6999 | CLK | GPIO17 |
+| String | Bonnet/HUB75 pin | Raspberry Pi GPIO |
+| ------ | ---------------- | ----------------- |
+| 0 | R1 | GPIO5 |
+| 1 | G1 | GPIO13 |
+| 2 | B1 | GPIO6 |
+| 3 | R2 | GPIO12 |
+| 4 | G2 | GPIO16 |
+| 5 | B2 | GPIO23 |
+| 6 | D | GPIO20 |
+| 7 | LAT/STB | GPIO21 |
+| 8 | A | GPIO22 |
+| 9 | B | GPIO26 |
+| 10 | C | GPIO27 |
+| 11 | E | GPIO24 |
+| 12 | OE | GPIO4 |
+| 13 | CLK | GPIO17 |
 
 Additionally, you will have to supply a layout to the renderer. The layout
 lists the position in 3d space of each of your LEDs plus an integer source
