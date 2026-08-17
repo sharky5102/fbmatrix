@@ -1,5 +1,10 @@
 import sys
 import os
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
+# Rendering tests do not exercise KMS scanout.  Force Mesa's software driver
+# so their GL limits and output are independent of the Raspberry Pi GPU model.
+os.environ['LIBGL_ALWAYS_SOFTWARE'] = 'true'
+
 import json
 import math
 import numpy as np
@@ -101,7 +106,7 @@ class TestHub75(unittest.TestCase):
                 self.assertEqual(expected.rstrip(), actual)
         
     def testSimple16Scan(self):
-        self.renderer = fbmatrix.renderer()
+        self.renderer = fbmatrix.renderer(backend='headless')
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: self.testPatternWhite()
@@ -112,7 +117,7 @@ class TestHub75(unittest.TestCase):
         self.assertFrameData('tst/data/hub75_32x32_white.txt', data)
 
     def testFieldFirstOrder(self):
-        self.renderer = fbmatrix.renderer(order='field-first')
+        self.renderer = fbmatrix.renderer(order='field-first', backend='headless')
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: self.testPatternWhite()
@@ -123,13 +128,15 @@ class TestHub75(unittest.TestCase):
         self.assertFrameData('tst/data/hub75_fieldfirst_32x32_white.txt', data)
 
     def testSourceFramebufferSize(self):
-        self.renderer = fbmatrix.renderer(source_columns=64, source_rows=48)
+        self.renderer = fbmatrix.renderer(
+            source_columns=64, source_rows=48, backend='headless')
 
         self.assertEqual(64, self.renderer.mainfbo.width)
         self.assertEqual(48, self.renderer.mainfbo.height)
 
     def testSourceFramebufferUsesMipmaps(self):
-        self.renderer = fbmatrix.renderer(source_columns=64, source_rows=64)
+        self.renderer = fbmatrix.renderer(
+            source_columns=64, source_rows=64, backend='headless')
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.renderer.mainfbo.getTexture())
 
         self.assertEqual(
@@ -143,7 +150,9 @@ class TestWS2811(unittest.TestCase):
     layout = [[0.0, 0.0, 0.0, 0]] * 7000
 
     def readFrameData(self, color, layout=None):
-        self.renderer = fbmatrix.renderer(display='ws2811', layout=layout or self.layout)
+        self.renderer = fbmatrix.renderer(
+            display='ws2811', layout=layout or self.layout,
+            backend='headless')
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: render_solid(color)
@@ -192,7 +201,9 @@ class TestWS2811(unittest.TestCase):
         self.assertTrue(first_pixel['B1'].startswith('1111111____________________________'))
 
     def testEmulationAcceptsLayout(self):
-        fbmatrix.renderer(display='ws2811', layout=self.layout, emulate=True)
+        fbmatrix.renderer(
+            display='ws2811', layout=self.layout, emulate=True,
+            backend='headless')
 
 
 class TestLayout(unittest.TestCase):
@@ -205,8 +216,8 @@ class TestLayout(unittest.TestCase):
             ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 1.5]])
 
     def testLayoutSourceModeMustBeKnown(self):
-        with self.assertRaisesRegex(RuntimeError, '-1, 0, 1, 2 or 3'):
-            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 4]])
+        with self.assertRaisesRegex(RuntimeError, '-1, 0, 1, 2, 3 or 4'):
+            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 5]])
 
     def testLayoutAcceptsInactiveSourceMode(self):
         self.assertEqual(

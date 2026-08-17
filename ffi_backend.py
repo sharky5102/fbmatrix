@@ -88,12 +88,6 @@ ffi.cdef("""
 
     typedef struct _drmModeAtomicReq drmModeAtomicReq;
 
-    typedef struct _drmEventContext {
-        int version;
-        void (*vblank_handler)(int, unsigned int, unsigned int, unsigned int, void *);
-        void (*page_flip_handler)(int, unsigned int, unsigned int, unsigned int, void *);
-    } drmEventContext;
-
     drmModeRes* drmModeGetResources(int fd);
     drmModeConnector* drmModeGetConnector(int fd, unsigned int connectorId);
     void drmModeFreeConnector(drmModeConnector *ptr);
@@ -110,7 +104,6 @@ ffi.cdef("""
     drmModePropertyRes* drmModeGetProperty(int fd, unsigned int property_id);
     void drmModeFreeProperty(drmModePropertyRes *ptr);
     int drmModeCreatePropertyBlob(int fd, const void *data, size_t length, unsigned int *id);
-    int drmModeDestroyPropertyBlob(int fd, unsigned int id);
     drmModeAtomicReq* drmModeAtomicAlloc(void);
     void drmModeAtomicFree(drmModeAtomicReq *req);
     int drmModeAtomicAddProperty(drmModeAtomicReq *req, unsigned int object_id, unsigned int property_id, unsigned long long value);
@@ -123,34 +116,18 @@ ffi.cdef("""
                       const unsigned int pitches[4], const unsigned int offsets[4],
                       const unsigned long long modifier[4], unsigned int *buf_id,
                       unsigned int flags);
-    int drmModeRmFB(int fd, unsigned int buffer_id);
-    int drmHandleEvent(int fd, drmEventContext *evctx);
-    
+
     // GBM
     typedef unsigned int uint32_t;
-    typedef int int32_t;
-    typedef intptr_t EGLNativeWindowType;
     typedef int EGLBoolean;
 
     // --- GBM Types & Opaque Structs ---
     struct gbm_device;
     struct gbm_surface;
     struct gbm_bo;
-    union gbm_bo_handle {
-        void *ptr;
-        int32_t s32;
-        uint32_t u32;
-        unsigned long long u64;
-    };
-    
+
     struct gbm_device* gbm_create_device(int fd);
     void gbm_device_destroy(struct gbm_device *gbm);
-    const char *gbm_device_get_backend_name(struct gbm_device *gbm);
-    int gbm_device_is_format_supported(struct gbm_device *gbm, uint32_t format, uint32_t usage);
-    struct gbm_bo *gbm_bo_create(struct gbm_device *gbm, uint32_t width,
-                                 uint32_t height, uint32_t format,
-                                 uint32_t flags);
-    void gbm_bo_destroy(struct gbm_bo *bo);
     struct gbm_surface *gbm_surface_create(
         struct gbm_device *gbm, 
         uint32_t width, 
@@ -160,8 +137,6 @@ ffi.cdef("""
     );
     struct gbm_bo *gbm_surface_lock_front_buffer(struct gbm_surface *surface);
     void gbm_surface_release_buffer(struct gbm_surface *surface, struct gbm_bo *bo);
-    unsigned long long gbm_bo_get_handle(struct gbm_bo *bo);
-    uint32_t gbm_bo_get_stride(struct gbm_bo *bo);
     int gbm_bo_get_plane_count(struct gbm_bo *bo);
     unsigned long long gbm_bo_get_handle_for_plane(struct gbm_bo *bo, int plane);
     uint32_t gbm_bo_get_stride_for_plane(struct gbm_bo *bo, int plane);
@@ -178,21 +153,16 @@ ffi.cdef("""
     EGLDisplay eglGetPlatformDisplay(unsigned int platform, void * native_display, const int * attrib_list);
 
     int eglInitialize(EGLDisplay dpy, int *major, int *minor);
-    int eglTerminate(EGLDisplay dpy);
-    
-    // --- EGL Functions ---
-    EGLSurface eglCreateWindowSurface(
-        EGLDisplay dpy, 
-        EGLConfig config, 
-        EGLNativeWindowType win, 
-        const int32_t *attrib_list
-    );
-
     EGLSurface eglCreatePlatformWindowSurface(
         EGLDisplay dpy, 
         EGLConfig config, 
         void *native_window, 
         const int32_t *attrib_list
+    );
+    EGLSurface eglCreatePbufferSurface(
+        EGLDisplay dpy,
+        EGLConfig config,
+        const int *attrib_list
     );
 
     EGLBoolean eglMakeCurrent(
@@ -207,13 +177,48 @@ ffi.cdef("""
     int eglChooseConfig(EGLDisplay dpy, const int *attrib_list, EGLConfig *configs, int config_size, int *num_config);
     int eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, int attribute, int *value);
     EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const int *attrib_list);
-    EGLContext eglGetCurrentContext(void);
     EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface);
     EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface surface, int attribute, int *value);
     int eglGetError(void);
-    const char *eglQueryString(EGLDisplay dpy, int name);
 """)
 
 drm = ffi.dlopen("libdrm.so.2")
 gbm = ffi.dlopen("libgbm.so.1")
 egl = ffi.dlopen("libEGL.so.1")
+
+# DRM connector, object, client-capability, and atomic flags.
+DRM_MODE_CONNECTOR_DPI = 17
+DRM_MODE_TYPE_PREFERRED = 1 << 3
+DRM_CLIENT_CAP_UNIVERSAL_PLANES = 2
+DRM_CLIENT_CAP_ATOMIC = 3
+DRM_MODE_OBJECT_CRTC = 0xCCCCCCCC
+DRM_MODE_OBJECT_CONNECTOR = 0xC0C0C0C0
+DRM_MODE_OBJECT_PLANE = 0xEEEEEEEE
+DRM_MODE_ATOMIC_ALLOW_MODESET = 0x0400
+DRM_MODE_FB_MODIFIERS = 0x02
+DRM_PLANE_TYPE_PRIMARY = 1
+
+# GBM formats and usage flags.
+GBM_FORMAT_XRGB8888 = 0x34325258
+GBM_BO_USE_SCANOUT = 1 << 0
+GBM_BO_USE_RENDERING = 1 << 2
+DRM_FORMAT_MOD_INVALID = 0xFFFFFFFFFFFFFFFF
+
+# EGL platform, API, config, and surface constants.
+EGL_PLATFORM_GBM_KHR = 0x31D7
+EGL_PLATFORM_SURFACELESS_MESA = 0x31DD
+EGL_OPENGL_API = 0x30A2
+EGL_NONE = 0x3038
+EGL_ALPHA_SIZE = 0x3021
+EGL_BLUE_SIZE = 0x3022
+EGL_GREEN_SIZE = 0x3023
+EGL_RED_SIZE = 0x3024
+EGL_DEPTH_SIZE = 0x3025
+EGL_NATIVE_VISUAL_ID = 0x302E
+EGL_SURFACE_TYPE = 0x3033
+EGL_WINDOW_BIT = 0x0004
+EGL_PBUFFER_BIT = 0x0001
+EGL_RENDERABLE_TYPE = 0x3040
+EGL_OPENGL_BIT = 0x0008
+EGL_HEIGHT = 0x3056
+EGL_WIDTH = 0x3057
