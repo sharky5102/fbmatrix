@@ -1,6 +1,5 @@
 import geometry
 import ledlayout
-import math
 import OpenGL.GL as gl
 import numpy as np
 
@@ -70,8 +69,9 @@ class tree(geometry.base):
         self.supersample = supersample
         self.time = 0
 
-        # Present the lamp locations as a 1d texture
-        self.mapwidth = pow(2, math.ceil(math.log(len(self.lamps))/math.log(2)))
+        # Present the lamp locations as a single-row texture. Modern OpenGL
+        # supports non-power-of-two texture dimensions.
+        self.mapwidth = len(self.lamps)
 
         data = np.zeros(self.mapwidth, (np.float32, 4))
         

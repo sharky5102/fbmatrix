@@ -1,5 +1,4 @@
 ﻿import geometry
-import math
 import ledlayout
 import OpenGL.GL as gl
 import numpy as np
@@ -178,8 +177,9 @@ class signalgenerator(geometry.base):
         self.tex = 0
         self.supersample = supersample
 
-        # Present the lamp locations as a 1d texture
-        self.mapwidth = pow(2, math.ceil(math.log(len(self.lamps))/math.log(2)))
+        # Present the lamp locations as a single-row texture. Modern OpenGL
+        # supports non-power-of-two texture dimensions.
+        self.mapwidth = len(self.lamps)
 
         data = np.zeros(self.mapwidth, (np.float32, 4))
         
