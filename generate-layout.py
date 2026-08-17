@@ -646,6 +646,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Layout generator')
     parser.add_argument('type', choices=['square', 'radial', 'dual-radial'], help='Layout type to generate')
     parser.add_argument(
+        '--string-leds',
+        type=int,
+        default=None,
+        help=(
+            'LED slots per output string; radial layouts require a multiple '
+            'of --section-leds (default: largest whole-section value up to 500)'
+        ),
+    )
+    parser.add_argument(
         '--source-modes',
         default='row-colors',
         choices=['framebuffer', 'row-colors'],
@@ -667,6 +676,23 @@ def parse_args():
     radial.add_argument('--section-leds', help='LED slots per radial section', type=int, default=250)
 
     args = parser.parse_args()
+
+    if args.string_leds is not None and not 1 <= args.string_leds:
+        parser.error('--string-leds must be greater than zero')
+
+    if args.type == 'square':
+        args.string_leds = args.string_leds or 500
+    else:
+        if args.section_leds <= 0:
+            parser.error('--section-leds must be greater than zero')
+        if args.section_leds > 500:
+            parser.error('--section-leds must not exceed 500')
+        if args.string_leds is None:
+            args.string_leds = (
+                500 // args.section_leds) * args.section_leds
+        elif args.string_leds % args.section_leds:
+            parser.error(
+                '--string-leds must be a multiple of --section-leds')
 
     if args.type == 'square' and (args.columns is None or args.rows is None):
         parser.error('square layout requires --columns and --rows')
@@ -726,7 +752,10 @@ def main():
         return 1
 
     print_layout_stats(args.type, points, args.section_leds if args.type != 'square' else None)
-    strings = [points[i:i + 500] for i in range(0, len(points), 500)]
+    strings = [
+        points[i:i + args.string_leds]
+        for i in range(0, len(points), args.string_leds)
+    ]
     print(json.dumps(strings))
     return 0
 

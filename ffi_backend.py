@@ -89,6 +89,7 @@ ffi.cdef("""
     typedef struct _drmModeAtomicReq drmModeAtomicReq;
 
     drmModeRes* drmModeGetResources(int fd);
+    int drmSetMaster(int fd);
     drmModeConnector* drmModeGetConnector(int fd, unsigned int connectorId);
     void drmModeFreeConnector(drmModeConnector *ptr);
     drmModeEncoder* drmModeGetEncoder(int fd, unsigned int encoder_id);
@@ -178,6 +179,7 @@ ffi.cdef("""
     int eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, int attribute, int *value);
     EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const int *attrib_list);
     EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface);
+    EGLBoolean eglSwapInterval(EGLDisplay dpy, int interval);
     EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface surface, int attribute, int *value);
     int eglGetError(void);
 """)
@@ -188,12 +190,17 @@ egl = ffi.dlopen("libEGL.so.1")
 
 # DRM connector, object, client-capability, and atomic flags.
 DRM_MODE_CONNECTOR_DPI = 17
+DRM_MODE_FLAG_PHSYNC = 1 << 0
+DRM_MODE_FLAG_PVSYNC = 1 << 2
 DRM_MODE_TYPE_PREFERRED = 1 << 3
+DRM_MODE_TYPE_USERDEF = 1 << 5
 DRM_CLIENT_CAP_UNIVERSAL_PLANES = 2
 DRM_CLIENT_CAP_ATOMIC = 3
 DRM_MODE_OBJECT_CRTC = 0xCCCCCCCC
 DRM_MODE_OBJECT_CONNECTOR = 0xC0C0C0C0
 DRM_MODE_OBJECT_PLANE = 0xEEEEEEEE
+DRM_MODE_PAGE_FLIP_EVENT = 0x01
+DRM_MODE_ATOMIC_NONBLOCK = 0x0200
 DRM_MODE_ATOMIC_ALLOW_MODESET = 0x0400
 DRM_MODE_FB_MODIFIERS = 0x02
 DRM_PLANE_TYPE_PRIMARY = 1

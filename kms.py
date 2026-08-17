@@ -1,4 +1,6 @@
 import os
+import select
+import time
 
 import OpenGL.GL as gl
 
@@ -7,12 +9,16 @@ from ffi_backend import (
     DRM_CLIENT_CAP_UNIVERSAL_PLANES,
     DRM_FORMAT_MOD_INVALID,
     DRM_MODE_ATOMIC_ALLOW_MODESET,
+    DRM_MODE_ATOMIC_NONBLOCK,
     DRM_MODE_CONNECTOR_DPI,
     DRM_MODE_FB_MODIFIERS,
+    DRM_MODE_FLAG_PHSYNC,
+    DRM_MODE_FLAG_PVSYNC,
     DRM_MODE_OBJECT_CONNECTOR,
     DRM_MODE_OBJECT_CRTC,
     DRM_MODE_OBJECT_PLANE,
-    DRM_MODE_TYPE_PREFERRED,
+    DRM_MODE_PAGE_FLIP_EVENT,
+    DRM_MODE_TYPE_USERDEF,
     DRM_PLANE_TYPE_PRIMARY,
     EGL_ALPHA_SIZE,
     EGL_BLUE_SIZE,
@@ -42,11 +48,27 @@ from ffi_backend import (
 class KMSDisplay:
     """Desktop OpenGL display backed by EGL, GBM, and atomic DRM/KMS."""
 
-    def __init__(self, device="/dev/dri/card1"):
+    def __init__(self, width, height, clock, vfp=0, vsync=0, vbp=0,
+                 device="/dev/dri/card1"):
         self.fd = os.open(device, os.O_RDWR | os.O_CLOEXEC)
+        if drm.drmSetMaster(self.fd) != 0:
+            error = ffi.errno
+            os.close(self.fd)
+            raise RuntimeError(
+                "Unable to become DRM master for %s (errno=%d: %s). "
+                "Stop the compositor/display manager using this DRM card "
+                "or run FBMatrix from a text console." %
+                (device, error, os.strerror(error)))
         self.format = GBM_FORMAT_XRGB8888
         self.current_bo = ffi.NULL
         self.framebuffers = {}
+        self.timing_frames = 0
+        self.egl_swap_time = 0.0
+        self.kms_commit_time = 0.0
+        self.mode = self._create_mode(
+            width, height, clock, vfp, vsync, vbp)
+        self.width = width
+        self.height = height
 
         self._initialize_drm()
         self._initialize_egl()
@@ -78,29 +100,8 @@ class KMSDisplay:
 
             if connector == ffi.NULL:
                 raise RuntimeError("DPI output was not detected")
-            if connector.count_modes == 0:
-                raise RuntimeError("DPI connector has no usable display modes")
-
             self.connector_id = connector.connector_id
-            self.mode = self._preferred_mode(connector)
-            self.width = self.mode.hdisplay
-            self.height = self.mode.vdisplay
-
-            encoder = drm.drmModeGetEncoder(self.fd, connector.encoder_id)
-            if encoder == ffi.NULL or encoder.crtc_id == 0:
-                raise RuntimeError("DPI connector has no active CRTC")
-            try:
-                self.crtc_id = encoder.crtc_id
-            finally:
-                drm.drmModeFreeEncoder(encoder)
-
-            crtc_index = next(
-                (i for i in range(resources.count_crtcs)
-                 if resources.crtcs[i] == self.crtc_id),
-                None,
-            )
-            if crtc_index is None:
-                raise RuntimeError("DPI CRTC is absent from DRM resources")
+            self.crtc_id, crtc_index = self._find_crtc(connector, resources)
 
             self._enable_atomic_capabilities()
             self.connector_properties = self._properties(
@@ -127,15 +128,47 @@ class KMSDisplay:
             drm.drmModeFreeResources(resources)
 
     @staticmethod
-    def _preferred_mode(connector):
-        mode_index = 0
-        for i in range(connector.count_modes):
-            if connector.modes[i].type & DRM_MODE_TYPE_PREFERRED:
-                mode_index = i
-                break
+    def _create_mode(width, height, clock, vfp=0, vsync=0, vbp=0):
         mode = ffi.new("drmModeModeInfo *")
-        mode[0] = connector.modes[mode_index]
+        mode.clock = clock
+        mode.hdisplay = width
+        mode.hsync_start = width
+        mode.hsync_end = width
+        mode.htotal = width
+        mode.vdisplay = height
+        mode.vsync_start = height + vfp
+        mode.vsync_end = mode.vsync_start + vsync
+        mode.vtotal = mode.vsync_end + vbp
+        mode.vrefresh = round(clock * 1000 / (width * mode.vtotal))
+        mode.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC
+        mode.type = DRM_MODE_TYPE_USERDEF
+        name = ('%dx%d' % (width, height)).encode()
+        ffi.memmove(mode.name, name, min(len(name), 31))
         return mode
+
+    def _find_crtc(self, connector, resources):
+        encoder_ids = []
+        if connector.encoder_id:
+            encoder_ids.append(connector.encoder_id)
+        encoder_ids.extend(
+            connector.encoders[i] for i in range(connector.count_encoders)
+            if connector.encoders[i] not in encoder_ids)
+
+        for encoder_id in encoder_ids:
+            encoder = drm.drmModeGetEncoder(self.fd, encoder_id)
+            if encoder == ffi.NULL:
+                continue
+            try:
+                if encoder.crtc_id:
+                    for i in range(resources.count_crtcs):
+                        if resources.crtcs[i] == encoder.crtc_id:
+                            return encoder.crtc_id, i
+                for i in range(resources.count_crtcs):
+                    if encoder.possible_crtcs & (1 << i):
+                        return resources.crtcs[i], i
+            finally:
+                drm.drmModeFreeEncoder(encoder)
+        raise RuntimeError("No CRTC is compatible with the DPI connector")
 
     def _enable_atomic_capabilities(self):
         if drm.drmSetClientCap(
@@ -239,6 +272,11 @@ class KMSDisplay:
                 self.egl_display, self.egl_surface, self.egl_surface,
                 self.egl_context):
             self._raise_egl("Failed to make EGL context current")
+        # Atomic KMS presentation below is the frame-pacing point. Leaving
+        # EGL's default swap interval enabled can wait for one refresh here
+        # and then wait for a second refresh in drmModeAtomicCommit().
+        if not egl.eglSwapInterval(self.egl_display, 0):
+            self._raise_egl("Failed to disable EGL swap interval")
 
         self._validate_surface_size()
 
@@ -290,8 +328,13 @@ class KMSDisplay:
                            (message, egl.eglGetError()))
 
     def present(self):
+        swap_started = time.monotonic()
         if not egl.eglSwapBuffers(self.egl_display, self.egl_surface):
             self._raise_egl("eglSwapBuffers failed")
+        # eglSwapBuffers only submits work on Mesa. Finish it here so startup
+        # diagnostics distinguish GPU execution from the KMS page-flip wait.
+        gl.glFinish()
+        swap_finished = time.monotonic()
 
         next_bo = gbm.gbm_surface_lock_front_buffer(self.gbm_surface)
         if next_bo == ffi.NULL:
@@ -301,10 +344,26 @@ class KMSDisplay:
         if self.current_bo == ffi.NULL:
             self._modeset(next_fb)
         else:
+            commit_started = time.monotonic()
             self._atomic_present(next_fb)
+            self.kms_commit_time += time.monotonic() - commit_started
+            self.egl_swap_time += swap_finished - swap_started
+            self.timing_frames += 1
             gbm.gbm_surface_release_buffer(
                 self.gbm_surface, self.current_bo)
         self.current_bo = next_bo
+
+    def consume_timings(self):
+        if self.timing_frames == 0:
+            return None
+        timings = (
+            1000 * self.egl_swap_time / self.timing_frames,
+            1000 * self.kms_commit_time / self.timing_frames,
+        )
+        self.timing_frames = 0
+        self.egl_swap_time = 0.0
+        self.kms_commit_time = 0.0
+        return timings
 
     def _framebuffer_for_bo(self, bo):
         key = int(ffi.cast("size_t", bo))
@@ -359,7 +418,18 @@ class KMSDisplay:
             if drm.drmModeAtomicCommit(
                     self.fd, request, DRM_MODE_ATOMIC_ALLOW_MODESET,
                     ffi.NULL) != 0:
-                raise RuntimeError("Initial atomic KMS modeset failed")
+                error = ffi.errno
+                raise RuntimeError(
+                    "Initial atomic KMS modeset failed for "
+                    "%dx%d (clock=%d kHz, h=%d/%d/%d/%d, "
+                    "v=%d/%d/%d/%d, errno=%d: %s)" % (
+                        self.mode.hdisplay, self.mode.vdisplay,
+                        self.mode.clock,
+                        self.mode.hdisplay, self.mode.hsync_start,
+                        self.mode.hsync_end, self.mode.htotal,
+                        self.mode.vdisplay, self.mode.vsync_start,
+                        self.mode.vsync_end, self.mode.vtotal,
+                        error, os.strerror(error)))
         finally:
             drm.drmModeAtomicFree(request)
 
@@ -369,11 +439,24 @@ class KMSDisplay:
             self._add_property(
                 request, self.plane_id, self.plane_properties,
                 "FB_ID", fb_id)
-            # Blocking commit: when it returns, the previous BO is no longer
-            # scanned out and can safely be released.
+            # Queue the flip asynchronously, then wait for its completion
+            # event. The blocking atomic path on VC4 can wait for two refresh
+            # periods; the event path completes on the next page flip.
             if drm.drmModeAtomicCommit(
-                    self.fd, request, 0, ffi.NULL) != 0:
-                raise RuntimeError("Atomic KMS presentation failed")
+                    self.fd, request,
+                    DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT,
+                    ffi.NULL) != 0:
+                error = ffi.errno
+                raise RuntimeError(
+                    "Atomic KMS presentation failed (errno=%d: %s)" %
+                    (error, os.strerror(error)))
+            while True:
+                try:
+                    select.select([self.fd], [], [])
+                    os.read(self.fd, 4096)
+                    break
+                except InterruptedError:
+                    continue
         finally:
             drm.drmModeAtomicFree(request)
 

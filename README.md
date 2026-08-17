@@ -40,18 +40,12 @@ and networking should be configured and working.
 2. You need to enable the DPI display output on your Raspberry pi, by adding the following to your /boot/config.txt:
 
 		dtoverlay=dpi24
-		overscan_left=0
-		overscan_right=0
-		overscan_top=0
-		overscan_bottom=0
-		framebuffer_width=4096
-		framebuffer_height=194
 		enable_dpi_lcd=1
 		display_default_lcd=1
-		dpi_group=2
-		dpi_mode=87
 		dpi_output_format=0x6f007
-		dpi_timings=4096 0 0 0 0 194 0 0 0 0 0 0 0 60 0 50000000 6
+
+	FBMatrix creates the KMS mode itself at startup. No framebuffer dimensions,
+	DPI group/mode, or `dpi_timings` setting is needed in the boot configuration.
 
 3. Power off the pi, and attach the RGB bonnet and RGB display to the bonnet. Make sure the RGB matrix also has power.
 
@@ -105,14 +99,10 @@ and flickering on the output if you don't have a level shifter.
 Here is an [example](https://www.youtube.com/watch?v=WgSfZ5cgZH4) of running
 a video on a ws2811 string.
 
-To use this, you can use the same configuration as for HUB75 (see above),
-except that the resolution used by DPI should be different.  In this case,
-use the following configuration for timings:
-
-    dpi_timings=840 0 0 0 0 500 0 0 50 0 0 0 0 60 0 27000000 6
-
-This uses 500 active scanlines, one per LED in each universe, plus a 50-line
-vertical sync interval that provides the WS281x reset gap between frames.
+FBMatrix selects a width of 840 pixels and one active scanline per LED in the
+longest string. For example, if the longest configured string has 200 LEDs,
+the active KMS resolution is 840x200. A 50-line vertical sync interval provides
+the WS281x reset gap between frames.
 
 The outer array in `layout.json` contains the output strings, and each string
 contains its LED positions in wire order. Strings can have different lengths,
@@ -120,6 +110,13 @@ but each is currently limited to 500 LEDs. No padding is required. Up to 14
 strings are supported.
 An empty inner array leaves that output pin unused while retaining later string
 numbers.
+
+`generate-layout.py` groups generated LEDs into strings of at most 500 LEDs.
+For radial layouts, a string contains only whole fixed sections, so
+`--string-leds` must be a multiple of `--section-leds`. When it is omitted, the
+generator uses the largest whole-section string that fits the 500-LED limit.
+For example, `--section-leds 200 --string-leds 200` assigns one section to each
+string and produces an active output resolution of 840x200.
 
 The current WS281x universe-to-pin mapping is:
 

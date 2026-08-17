@@ -14,6 +14,7 @@ import displays.hub75e
 import displays.ws2811
 import fbo
 import geometry.simple
+import ledlayout
 from headless import HeadlessDisplay
 from kms import KMSDisplay
 
@@ -25,6 +26,41 @@ def signal_handler(sig, frame):
 global_init = False
 global_display_backend = None
 global_backend = None
+
+
+def output_mode(displaytype, layout=None):
+    if displaytype == 'ws2811':
+        if layout is None:
+            raise RuntimeError('WS2811 display requires a layout argument')
+        strings = ledlayout.require_xyzc_string_layout(
+            layout,
+            displays.ws2811.MAX_LEDS_PER_STRING,
+            displays.ws2811.MAX_STRINGS)
+        height = max((len(string) for string in strings), default=0)
+        if height == 0:
+            raise RuntimeError('WS2811 layout must contain at least one LED')
+        return 840, height, 27000, 1, 1, 48
+    return 4096, 194, 50000, 0, 0, 0
+
+
+def output_stats(displaytype, mode, layout=None):
+    width, height, clock, vfp, vsync, vbp = mode
+    fps = clock * 1000 / (width * (height + vfp + vsync + vbp))
+    if displaytype == 'ws2811':
+        strings = ledlayout.require_xyzc_string_layout(
+            layout,
+            displays.ws2811.MAX_LEDS_PER_STRING,
+            displays.ws2811.MAX_STRINGS)
+        active = sum(
+            source_mode != -1
+            for string in strings
+            for _x, _y, _z, source_mode in string)
+        inactive = sum(len(string) for string in strings) - active
+        return (
+            'FBMatrix: %d strings, %d active LEDs, %d inactive LEDs, '
+            '%dx%d, %.2f FPS' %
+            (len(strings), active, inactive, width, height, fps))
+    return 'FBMatrix: HUB75, %dx%d, %.2f FPS' % (width, height, fps)
 
 
 class renderer(object):
@@ -61,6 +97,8 @@ class renderer(object):
         self.extract = extract
         self.layout = layout
         self.starttime = time.time()
+        self.fps_started = time.monotonic()
+        self.fps_frames = 0
         if backend is None:
             backend = ('glut' if self.preview or self.emulate or self.raw
                        else 'kms')
@@ -100,6 +138,7 @@ class renderer(object):
             self.signalgenerator.render()
 
         self.swap_buffers()
+        self.report_fps()
 
         if self.use_window_manager:
             glut.glutPostRedisplay()
@@ -109,6 +148,27 @@ class renderer(object):
             glut.glutSwapBuffers()
         else:
             self.display_backend.present()
+
+    def report_fps(self):
+        self.fps_frames += 1
+        now = time.monotonic()
+        elapsed = now - self.fps_started
+        if elapsed < 1.0:
+            return
+
+        message = 'FBMatrix: %.1f measured FPS' % (
+            self.fps_frames / elapsed)
+        if (self.display_backend is not None and
+                hasattr(self.display_backend, 'consume_timings')):
+            timings = self.display_backend.consume_timings()
+            if timings is not None:
+                message += ', GPU %.1f ms, KMS %.1f ms' % timings
+        if sys.stderr.isatty():
+            print('\r' + message, end='', file=sys.stderr, flush=True)
+        else:
+            print(message, file=sys.stderr, flush=True)
+        self.fps_started = now
+        self.fps_frames = 0
 
     def reshape(self, width, height):
         self.screenWidth = width
@@ -125,13 +185,17 @@ class renderer(object):
     def init(self):
         global global_init, global_display_backend, global_backend
 
+        kms_args = output_mode(self.displaytype, self.layout)
+
         if not global_init:
             if self.backend == 'glut':
                 self.init_glut()
             elif self.backend == 'headless':
                 global_display_backend = HeadlessDisplay()
             else:
-                global_display_backend = KMSDisplay()
+                print(output_stats(
+                    self.displaytype, kms_args, self.layout), file=sys.stderr)
+                global_display_backend = KMSDisplay(*kms_args)
             global_backend = self.backend
             global_init = True
 

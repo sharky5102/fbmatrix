@@ -21,7 +21,7 @@ def require_xyzc_layout(layout):
     return normalized
 
 
-def require_xyzc_string_layout(layout, max_string_length=500, max_strings=14):
+def require_xyzc_string_layout(layout, max_string_length=2000, max_strings=14):
     if not layout:
         raise RuntimeError('Layout must contain at least one string')
     if len(layout) > max_strings:

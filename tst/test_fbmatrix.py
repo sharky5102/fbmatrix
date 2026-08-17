@@ -23,6 +23,12 @@ import geometry.simple
 import assembly.tree
 import fbmatrix
 import ledlayout
+from kms import KMSDisplay
+from ffi_backend import (
+    DRM_MODE_FLAG_PHSYNC,
+    DRM_MODE_FLAG_PVSYNC,
+    DRM_MODE_TYPE_USERDEF,
+)
 
 import unittest
 from OpenGL.GL.EXT.framebuffer_object import *
@@ -205,12 +211,60 @@ class TestWS2811(unittest.TestCase):
             display='ws2811', layout=self.layout, emulate=True,
             backend='headless')
 
+    def testOutputHeightUsesLongestString(self):
+        layout = [
+            [[0, 0, 0, 0]] * 73,
+            [[0, 0, 0, 0]] * 200,
+            [[0, 0, 0, 0]] * 12,
+        ]
+        self.assertEqual((840, 200, 27000, 1, 1, 48),
+                         fbmatrix.output_mode('ws2811', layout))
+
+    def testManualKmsModeUsesOutputHeight(self):
+        mode = KMSDisplay._create_mode(840, 200, 27000, 1, 1, 48)
+        self.assertEqual((840, 840, 840, 840),
+                         (mode.hdisplay, mode.hsync_start,
+                          mode.hsync_end, mode.htotal))
+        self.assertEqual((200, 201, 202, 250),
+                         (mode.vdisplay, mode.vsync_start,
+                          mode.vsync_end, mode.vtotal))
+        self.assertEqual(DRM_MODE_TYPE_USERDEF, mode.type)
+        self.assertEqual(
+            DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC, mode.flags)
+
+
+class TestKMSOutputModes(unittest.TestCase):
+    def testHub75UsesFixedOutputMode(self):
+        self.assertEqual((4096, 194, 50000, 0, 0, 0),
+                         fbmatrix.output_mode('hub75e'))
+
+        mode = KMSDisplay._create_mode(*fbmatrix.output_mode('hub75e'))
+        self.assertEqual((4096, 194), (mode.hdisplay, mode.vdisplay))
+
+    def testWs2811StartupStats(self):
+        layout = [
+            [[0, 0, 0, 0], [0, 0, 0, -1]],
+            [],
+            [[0, 0, 0, 2]],
+        ]
+        mode = fbmatrix.output_mode('ws2811', layout)
+        self.assertEqual(
+            'FBMatrix: 3 strings, 2 active LEDs, 1 inactive LEDs, '
+            '840x2, 618.13 FPS',
+            fbmatrix.output_stats('ws2811', mode, layout))
+
+    def testHub75StartupStats(self):
+        mode = fbmatrix.output_mode('hub75e')
+        self.assertEqual(
+            'FBMatrix: HUB75, 4096x194, 62.92 FPS',
+            fbmatrix.output_stats('hub75e', mode))
+
 
 class TestLayout(unittest.TestCase):
-    def testStringLayoutRejectsStringsOver500Leds(self):
-        with self.assertRaisesRegex(RuntimeError, 'string 0 contains 501 LEDs'):
+    def testStringLayoutRejectsStringsOver2000Leds(self):
+        with self.assertRaisesRegex(RuntimeError, 'string 0 contains 2001 LEDs'):
             ledlayout.require_xyzc_string_layout(
-                [[[0.0, 0.0, 0.0, 0]] * 501])
+                [[[0.0, 0.0, 0.0, 0]] * 2001])
 
     def testStringLayoutPreservesStringBoundaries(self):
         self.assertEqual(
@@ -319,6 +373,57 @@ class TestGenerateLayout(unittest.TestCase):
             [0.5, 0.5, 0, 2],
             [-0.5, 0.5, 0, 2],
         ]], json.loads(result.stdout))
+
+    def testSquareLayoutUsesConfiguredStringLength(self):
+        result = self.runGenerator(
+            'square', '--columns', '25', '--rows', '18',
+            '--string-leds', '200')
+
+        self.assertEqual(0, result.returncode)
+        strings = json.loads(result.stdout)
+        self.assertEqual([200, 200, 50], list(map(len, strings)))
+
+    def testStringLengthMustBePositive(self):
+        result = self.runGenerator(
+            'square', '--columns', '2', '--rows', '2',
+            '--string-leds', '0')
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            '--string-leds must be greater than zero', result.stderr)
+
+    def testRadialStringLengthMustContainWholeSections(self):
+        result = self.runGenerator(
+            'radial',
+            '--width', '6',
+            '--height', '7',
+            '--led-distance', '0.1',
+            '--hub-radius', '0.2',
+            '--spokes', '32',
+            '--section-leds', '200',
+            '--string-leds', '300',
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            '--string-leds must be a multiple of --section-leds',
+            result.stderr)
+
+    def testRadialStringsDoNotSplitSections(self):
+        result = self.runGenerator(
+            'radial',
+            '--width', '6',
+            '--height', '7',
+            '--led-distance', '0.1',
+            '--hub-radius', '0.2',
+            '--spokes', '32',
+            '--section-leds', '200',
+            '--string-leds', '200',
+        )
+
+        self.assertEqual(0, result.returncode)
+        self.assertEqual([200] * 8,
+                         list(map(len, json.loads(result.stdout))))
 
     def testRadialLayoutGeneratesFixedSectionsWithInactiveHopsAndPadding(self):
         result = self.runGenerator(

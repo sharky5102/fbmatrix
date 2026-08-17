@@ -4,7 +4,7 @@ import OpenGL.GL as gl
 import numpy as np
 import ctypes
 
-MAX_LEDS_PER_STRING = 500
+MAX_LEDS_PER_STRING = 2000
 MAX_STRINGS = 14
 
 
@@ -33,6 +33,7 @@ class signalgenerator(geometry.base):
         uniform sampler2D tex;
         uniform sampler2D lamptex;
         uniform highp float supersample;
+		uniform int string_length;
 		
         out highp vec4 f_color;
         in highp vec2 v_texcoor;
@@ -143,7 +144,7 @@ class signalgenerator(geometry.base):
 
         void main()
         {
-            int y = int(v_texcoor.y * 500.0);
+            int y = int(v_texcoor.y * float(string_length));
 			int pixel, bit;
 			lowp float bitoffset;
 			
@@ -154,20 +155,7 @@ class signalgenerator(geometry.base):
             lowp int R1, G1, B1, R2, G2, B2, D, LAT, A, B, C, E, OE, CLK;
             R1 = G1 = B1 = R2 = G2 = B2 = D = LAT = A = B = C = E = OE = CLK = 0;
 
-            R1 =  getSignal(0,  pixel, bit, bitoffset);
-            G1 =  getSignal(1,  pixel, bit, bitoffset);
-            B1 =  getSignal(2,  pixel, bit, bitoffset);
-            R2 =  getSignal(3,  pixel, bit, bitoffset);
-            G2 =  getSignal(4,  pixel, bit, bitoffset);
-            B2 =  getSignal(5,  pixel, bit, bitoffset);
-            D =   getSignal(6,  pixel, bit, bitoffset);
-            LAT = getSignal(7,  pixel, bit, bitoffset);
-            A =   getSignal(8,  pixel, bit, bitoffset);
-            B =   getSignal(9,  pixel, bit, bitoffset);
-            C =   getSignal(10, pixel, bit, bitoffset);
-            E =   getSignal(11, pixel, bit, bitoffset);
-            OE =  getSignal(12, pixel, bit, bitoffset);
-            CLK = getSignal(13, pixel, bit, bitoffset);
+            STRING_SIGNALS;
 
             lowp ivec3 data;
             setBits(data, D, LAT, A, B2, E, B, C, R2, G1, G2, CLK, OE, R1, B1);
@@ -182,12 +170,26 @@ class signalgenerator(geometry.base):
         self.strings = ledlayout.require_xyzc_string_layout(
             layout, MAX_LEDS_PER_STRING, MAX_STRINGS)
         self.lamps = ledlayout.flatten_string_layout(self.strings)
+        self.string_length = max((len(string) for string in self.strings),
+                                 default=0)
+        if self.string_length == 0:
+            raise RuntimeError('WS2811 layout must contain at least one LED')
+        signal_names = [
+            'R1', 'G1', 'B1', 'R2', 'G2', 'B2', 'D',
+            'LAT', 'A', 'B', 'C', 'E', 'OE', 'CLK',
+        ]
+        signal_calls = [
+            '%s = getSignal(%d, pixel, bit, bitoffset)' % (name, index)
+            for index, name in enumerate(signal_names[:len(self.strings)])
+        ]
+        self.fragment_code = self.fragment_code.replace(
+            'STRING_SIGNALS;', ';\n            '.join(signal_calls) + ';')
         self.tex = 0
         self.supersample = supersample
 
         # A row represents an output string and a column its LED number.
         # Missing LEDs and unused hardware outputs are inactive.
-        self.mapwidth = MAX_LEDS_PER_STRING
+        self.mapwidth = self.string_length
         self.mapheight = MAX_STRINGS
 
         data = np.zeros((self.mapheight, self.mapwidth, 4), dtype=np.float32)
@@ -230,6 +232,9 @@ class signalgenerator(geometry.base):
 
         loc = gl.glGetUniformLocation(self.program, "supersample")
         gl.glUniform1f(loc, self.supersample)
+
+        loc = gl.glGetUniformLocation(self.program, "string_length")
+        gl.glUniform1i(loc, self.string_length)
 
 
         super(signalgenerator, self).draw()
