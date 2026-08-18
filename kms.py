@@ -1,8 +1,10 @@
 import glob
+import atexit
 import os
 import select
 import sys
 import time
+from contextlib import contextmanager
 
 import OpenGL.GL as gl
 
@@ -47,12 +49,92 @@ from ffi_backend import (
 )
 
 
+class _DRMDevice:
+    """Python ownership scopes for libdrm objects allocated from one fd."""
+
+    def __init__(self, fd):
+        self.fd = fd
+
+    @staticmethod
+    @contextmanager
+    def _owned(acquire, release, error):
+        pointer = acquire()
+        if pointer == ffi.NULL:
+            raise RuntimeError(error)
+        try:
+            yield pointer
+        finally:
+            release(pointer)
+
+    def resources(self):
+        return self._owned(
+            lambda: drm.drmModeGetResources(self.fd),
+            drm.drmModeFreeResources,
+            "Failed to retrieve DRM resources")
+
+    def connector(self, connector_id):
+        return self._owned(
+            lambda: drm.drmModeGetConnector(self.fd, connector_id),
+            drm.drmModeFreeConnector,
+            "Failed to retrieve DRM connector %d" % connector_id)
+
+    def encoder(self, encoder_id):
+        return self._owned(
+            lambda: drm.drmModeGetEncoder(self.fd, encoder_id),
+            drm.drmModeFreeEncoder,
+            "Failed to retrieve DRM encoder %d" % encoder_id)
+
+    def plane_resources(self):
+        return self._owned(
+            lambda: drm.drmModeGetPlaneResources(self.fd),
+            drm.drmModeFreePlaneResources,
+            "Unable to retrieve DRM planes")
+
+    def plane(self, plane_id):
+        return self._owned(
+            lambda: drm.drmModeGetPlane(self.fd, plane_id),
+            drm.drmModeFreePlane,
+            "Failed to retrieve DRM plane %d" % plane_id)
+
+    def object_properties(self, object_id, object_type):
+        return self._owned(
+            lambda: drm.drmModeObjectGetProperties(
+                self.fd, object_id, object_type),
+            drm.drmModeFreeObjectProperties,
+            "Unable to read KMS properties for object %d" % object_id)
+
+    def property(self, property_id):
+        return self._owned(
+            lambda: drm.drmModeGetProperty(self.fd, property_id),
+            drm.drmModeFreeProperty,
+            "Failed to retrieve DRM property %d" % property_id)
+
+    def atomic_request(self):
+        return self._owned(
+            drm.drmModeAtomicAlloc,
+            drm.drmModeAtomicFree,
+            "Unable to allocate atomic KMS request")
+
+
 class KMSDisplay:
     """Desktop OpenGL display backed by EGL, GBM, and atomic DRM/KMS."""
 
     def __init__(self, width, height, clock, vfp=0, vsync=0, vbp=0,
                  device=None):
+        self.closed = False
+        self.fd = None
+        self.master = False
+        self.mode_blob_id = 0
+        self.gbm_device = ffi.NULL
+        self.gbm_surface = ffi.NULL
+        self.egl_display = ffi.NULL
+        self.egl_surface = ffi.NULL
+        self.egl_context = ffi.NULL
+        self.current_bo = ffi.NULL
+        self.framebuffers = {}
+
         self.device, self.fd = self._open_dpi_device(device)
+        self._drm = _DRMDevice(self.fd)
         if drm.drmSetMaster(self.fd) != 0:
             error = ffi.errno
             os.close(self.fd)
@@ -61,9 +143,8 @@ class KMSDisplay:
                 "Stop the compositor/display manager using this DRM card "
                 "or run FBMatrix from a text console." %
                 (self.device, error, os.strerror(error)))
+        self.master = True
         self.format = GBM_FORMAT_XRGB8888
-        self.current_bo = ffi.NULL
-        self.framebuffers = {}
         self.timing_frames = 0
         self.egl_swap_time = 0.0
         self.kms_commit_time = 0.0
@@ -72,17 +153,107 @@ class KMSDisplay:
         self.width = width
         self.height = height
 
-        self._initialize_drm()
-        print(self._device_description(), file=sys.stderr)
-        self._initialize_egl()
+        try:
+            self._initialize_drm()
+            print(self._device_description(), file=sys.stderr)
+            self._initialize_egl()
 
-        gl.glViewport(0, 0, self.width, self.height)
+            gl.glViewport(0, 0, self.width, self.height)
 
-        # Establish the first GBM buffer and scanout target before application
-        # rendering starts. Mesa attaches framebuffer 0 lazily on first swap.
-        gl.glClearColor(0, 0, 0, 0)
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
-        self.present()
+            # Establish the first GBM buffer and scanout target before
+            # application rendering starts.
+            gl.glClearColor(0, 0, 0, 0)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+            self.present()
+        except BaseException:
+            self.close()
+            raise
+        atexit.register(self.close)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _type, _value, _traceback):
+        self.close()
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+
+        if self.fd is not None and self.master:
+            self._disable_scanout()
+
+        if self.current_bo != ffi.NULL and self.gbm_surface != ffi.NULL:
+            gbm.gbm_surface_release_buffer(
+                self.gbm_surface, self.current_bo)
+            self.current_bo = ffi.NULL
+
+        if self.fd is not None:
+            for fb_id in set(self.framebuffers.values()):
+                drm.drmModeRmFB(self.fd, fb_id)
+            self.framebuffers.clear()
+
+        if self.egl_display != ffi.NULL:
+            egl.eglMakeCurrent(
+                self.egl_display, ffi.NULL, ffi.NULL, ffi.NULL)
+            if self.egl_context != ffi.NULL:
+                egl.eglDestroyContext(self.egl_display, self.egl_context)
+                self.egl_context = ffi.NULL
+            if self.egl_surface != ffi.NULL:
+                egl.eglDestroySurface(self.egl_display, self.egl_surface)
+                self.egl_surface = ffi.NULL
+            egl.eglTerminate(self.egl_display)
+            self.egl_display = ffi.NULL
+
+        if self.gbm_surface != ffi.NULL:
+            gbm.gbm_surface_destroy(self.gbm_surface)
+            self.gbm_surface = ffi.NULL
+        if self.gbm_device != ffi.NULL:
+            gbm.gbm_device_destroy(self.gbm_device)
+            self.gbm_device = ffi.NULL
+
+        if self.fd is not None:
+            if self.mode_blob_id:
+                drm.drmModeDestroyPropertyBlob(
+                    self.fd, self.mode_blob_id)
+                self.mode_blob_id = 0
+            if self.master:
+                drm.drmDropMaster(self.fd)
+                self.master = False
+            os.close(self.fd)
+            self.fd = None
+
+    def _disable_scanout(self):
+        required = (
+            'plane_id', 'plane_properties', 'connector_id',
+            'connector_properties', 'crtc_id', 'crtc_properties')
+        if not all(hasattr(self, name) for name in required):
+            return
+        try:
+            with self._drm.atomic_request() as request:
+                self._add_property(
+                    request, self.plane_id, self.plane_properties,
+                    'FB_ID', 0)
+                self._add_property(
+                    request, self.plane_id, self.plane_properties,
+                    'CRTC_ID', 0)
+                self._add_property(
+                    request, self.connector_id, self.connector_properties,
+                    'CRTC_ID', 0)
+                self._add_property(
+                    request, self.crtc_id, self.crtc_properties,
+                    'ACTIVE', 0)
+                self._add_property(
+                    request, self.crtc_id, self.crtc_properties,
+                    'MODE_ID', 0)
+                drm.drmModeAtomicCommit(
+                    self.fd, request, DRM_MODE_ATOMIC_ALLOW_MODESET,
+                    ffi.NULL)
+        except Exception:
+            # Continue releasing userspace resources even if the device has
+            # already disappeared or rejects the final disable commit.
+            pass
 
     @staticmethod
     def _card_devices():
@@ -124,70 +295,50 @@ class KMSDisplay:
 
     @staticmethod
     def _device_has_dpi(fd):
-        resources = drm.drmModeGetResources(fd)
-        if resources == ffi.NULL:
-            raise RuntimeError("failed to retrieve DRM resources")
-        try:
+        device = _DRMDevice(fd)
+        with device.resources() as resources:
             for i in range(resources.count_connectors):
-                connector = drm.drmModeGetConnector(
-                    fd, resources.connectors[i])
-                if connector == ffi.NULL:
-                    continue
-                try:
+                with device.connector(
+                        resources.connectors[i]) as connector:
                     if connector.connector_type == DRM_MODE_CONNECTOR_DPI:
                         return True
-                finally:
-                    drm.drmModeFreeConnector(connector)
             return False
-        finally:
-            drm.drmModeFreeResources(resources)
 
     def _initialize_drm(self):
-        resources = drm.drmModeGetResources(self.fd)
-        if resources == ffi.NULL:
-            raise RuntimeError("Failed to retrieve DRM resources")
-
-        connector = ffi.NULL
-        try:
+        with self._drm.resources() as resources:
             for i in range(resources.count_connectors):
-                candidate = drm.drmModeGetConnector(
-                    self.fd, resources.connectors[i])
-                if candidate == ffi.NULL:
-                    continue
-                if candidate.connector_type == DRM_MODE_CONNECTOR_DPI:
-                    connector = candidate
-                    break
-                drm.drmModeFreeConnector(candidate)
+                with self._drm.connector(
+                        resources.connectors[i]) as connector:
+                    if connector.connector_type != DRM_MODE_CONNECTOR_DPI:
+                        continue
+                    self._initialize_connector(connector, resources)
+                    return
+            raise RuntimeError("DPI output was not detected")
 
-            if connector == ffi.NULL:
-                raise RuntimeError("DPI output was not detected")
-            self.connector_id = connector.connector_id
-            self.connector_name = 'DPI-%d' % connector.connector_type_id
-            self.crtc_id, crtc_index = self._find_crtc(connector, resources)
+    def _initialize_connector(self, connector, resources):
+        self.connector_id = connector.connector_id
+        self.connector_name = 'DPI-%d' % connector.connector_type_id
+        self.crtc_id, crtc_index = self._find_crtc(connector, resources)
 
-            self._enable_atomic_capabilities()
-            self.connector_properties = self._properties(
-                self.connector_id, DRM_MODE_OBJECT_CONNECTOR)
-            self.crtc_properties = self._properties(
-                self.crtc_id, DRM_MODE_OBJECT_CRTC)
-            self._require_properties(
-                self.connector_properties, ["CRTC_ID"], "connector")
-            self._require_properties(
-                self.crtc_properties, ["MODE_ID", "ACTIVE"], "CRTC")
+        self._enable_atomic_capabilities()
+        self.connector_properties = self._properties(
+            self.connector_id, DRM_MODE_OBJECT_CONNECTOR)
+        self.crtc_properties = self._properties(
+            self.crtc_id, DRM_MODE_OBJECT_CRTC)
+        self._require_properties(
+            self.connector_properties, ["CRTC_ID"], "connector")
+        self._require_properties(
+            self.crtc_properties, ["MODE_ID", "ACTIVE"], "CRTC")
 
-            self.plane_id, self.plane_properties = self._find_primary_plane(
-                crtc_index)
+        self.plane_id, self.plane_properties = self._find_primary_plane(
+            crtc_index)
 
-            blob_id = ffi.new("unsigned int *")
-            if drm.drmModeCreatePropertyBlob(
-                    self.fd, self.mode, ffi.sizeof("drmModeModeInfo"),
-                    blob_id) != 0:
-                raise RuntimeError("Unable to create DRM mode property blob")
-            self.mode_blob_id = blob_id[0]
-        finally:
-            if connector != ffi.NULL:
-                drm.drmModeFreeConnector(connector)
-            drm.drmModeFreeResources(resources)
+        blob_id = ffi.new("unsigned int *")
+        if drm.drmModeCreatePropertyBlob(
+                self.fd, self.mode, ffi.sizeof("drmModeModeInfo"),
+                blob_id) != 0:
+            raise RuntimeError("Unable to create DRM mode property blob")
+        self.mode_blob_id = blob_id[0]
 
     def _device_description(self):
         return 'FBMatrix: DRM card %s (%s), output %s (connector %d)' % (
@@ -222,10 +373,7 @@ class KMSDisplay:
             if connector.encoders[i] not in encoder_ids)
 
         for encoder_id in encoder_ids:
-            encoder = drm.drmModeGetEncoder(self.fd, encoder_id)
-            if encoder == ffi.NULL:
-                continue
-            try:
+            with self._drm.encoder(encoder_id) as encoder:
                 if encoder.crtc_id:
                     for i in range(resources.count_crtcs):
                         if resources.crtcs[i] == encoder.crtc_id:
@@ -233,8 +381,6 @@ class KMSDisplay:
                 for i in range(resources.count_crtcs):
                     if encoder.possible_crtcs & (1 << i):
                         return resources.crtcs[i], i
-            finally:
-                drm.drmModeFreeEncoder(encoder)
         raise RuntimeError("No CRTC is compatible with the DPI connector")
 
     def _enable_atomic_capabilities(self):
@@ -249,16 +395,10 @@ class KMSDisplay:
             "FB_ID", "CRTC_ID", "SRC_X", "SRC_Y", "SRC_W", "SRC_H",
             "CRTC_X", "CRTC_Y", "CRTC_W", "CRTC_H",
         ]
-        plane_resources = drm.drmModeGetPlaneResources(self.fd)
-        if plane_resources == ffi.NULL:
-            raise RuntimeError("Unable to retrieve DRM planes")
-        try:
+        with self._drm.plane_resources() as plane_resources:
             for i in range(plane_resources.count_planes):
-                plane = drm.drmModeGetPlane(
-                    self.fd, plane_resources.planes[i])
-                if plane == ffi.NULL:
-                    continue
-                try:
+                with self._drm.plane(
+                        plane_resources.planes[i]) as plane:
                     if not (plane.possible_crtcs & (1 << crtc_index)):
                         continue
                     properties = self._properties(
@@ -269,31 +409,16 @@ class KMSDisplay:
                         self._require_properties(
                             properties, required, "primary plane")
                         return plane.plane_id, properties
-                finally:
-                    drm.drmModeFreePlane(plane)
-        finally:
-            drm.drmModeFreePlaneResources(plane_resources)
         raise RuntimeError("No primary plane is compatible with the DPI CRTC")
 
     def _properties(self, object_id, object_type):
         result = {}
-        properties = drm.drmModeObjectGetProperties(
-            self.fd, object_id, object_type)
-        if properties == ffi.NULL:
-            raise RuntimeError(
-                "Unable to read KMS properties for object %d" % object_id)
-        try:
+        with self._drm.object_properties(
+                object_id, object_type) as properties:
             for i in range(properties.count_props):
-                prop = drm.drmModeGetProperty(self.fd, properties.props[i])
-                if prop == ffi.NULL:
-                    continue
-                try:
+                with self._drm.property(properties.props[i]) as prop:
                     result[ffi.string(prop.name).decode()] = (
                         prop.prop_id, properties.prop_values[i])
-                finally:
-                    drm.drmModeFreeProperty(prop)
-        finally:
-            drm.drmModeFreeObjectProperties(properties)
         return result
 
     @staticmethod
@@ -471,8 +596,7 @@ class KMSDisplay:
         return fb_id[0]
 
     def _modeset(self, fb_id):
-        request = self._atomic_request()
-        try:
+        with self._drm.atomic_request() as request:
             self._add_property(
                 request, self.connector_id, self.connector_properties,
                 "CRTC_ID", self.crtc_id)
@@ -497,12 +621,9 @@ class KMSDisplay:
                         self.mode.vdisplay, self.mode.vsync_start,
                         self.mode.vsync_end, self.mode.vtotal,
                         error, os.strerror(error)))
-        finally:
-            drm.drmModeAtomicFree(request)
 
     def _atomic_present(self, fb_id):
-        request = self._atomic_request()
-        try:
+        with self._drm.atomic_request() as request:
             self._add_property(
                 request, self.plane_id, self.plane_properties,
                 "FB_ID", fb_id)
@@ -524,8 +645,6 @@ class KMSDisplay:
                     break
                 except InterruptedError:
                     continue
-        finally:
-            drm.drmModeAtomicFree(request)
 
     def _add_plane_properties(self, request, fb_id):
         values = {
@@ -543,13 +662,6 @@ class KMSDisplay:
         for name, value in values.items():
             self._add_property(
                 request, self.plane_id, self.plane_properties, name, value)
-
-    @staticmethod
-    def _atomic_request():
-        request = drm.drmModeAtomicAlloc()
-        if request == ffi.NULL:
-            raise RuntimeError("Unable to allocate atomic KMS request")
-        return request
 
     @staticmethod
     def _add_property(request, object_id, properties, name, value):

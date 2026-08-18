@@ -24,11 +24,12 @@ import geometry.simple
 import assembly.tree
 import fbmatrix
 import ledlayout
-from kms import KMSDisplay
+from kms import KMSDisplay, _DRMDevice
 from ffi_backend import (
     DRM_MODE_FLAG_PHSYNC,
     DRM_MODE_FLAG_PVSYNC,
     DRM_MODE_TYPE_USERDEF,
+    ffi,
 )
 
 import unittest
@@ -235,6 +236,55 @@ class TestWS2811(unittest.TestCase):
 
 
 class TestKMSOutputModes(unittest.TestCase):
+    @mock.patch('kms.os.close')
+    @mock.patch('kms.egl')
+    @mock.patch('kms.gbm')
+    @mock.patch('kms.drm')
+    def testKmsCloseReleasesResourcesOnce(
+            self, drm_api, gbm_api, egl_api, close_fd):
+        display = object.__new__(KMSDisplay)
+        display.closed = False
+        display.fd = 10
+        display.master = True
+        display.mode_blob_id = 7
+        display.current_bo = ffi.cast('struct gbm_bo *', 1)
+        display.gbm_surface = ffi.cast('struct gbm_surface *', 2)
+        display.gbm_device = ffi.cast('struct gbm_device *', 3)
+        display.egl_display = ffi.cast('EGLDisplay', 4)
+        display.egl_surface = ffi.cast('EGLSurface', 5)
+        display.egl_context = ffi.cast('EGLContext', 6)
+        display.framebuffers = {1: 20, 2: 21}
+        display._disable_scanout = mock.Mock()
+
+        display.close()
+        display.close()
+
+        display._disable_scanout.assert_called_once_with()
+        gbm_api.gbm_surface_release_buffer.assert_called_once()
+        self.assertCountEqual(
+            [mock.call(10, 20), mock.call(10, 21)],
+            drm_api.drmModeRmFB.call_args_list)
+        egl_api.eglDestroyContext.assert_called_once()
+        egl_api.eglDestroySurface.assert_called_once()
+        egl_api.eglTerminate.assert_called_once()
+        gbm_api.gbm_surface_destroy.assert_called_once()
+        gbm_api.gbm_device_destroy.assert_called_once()
+        drm_api.drmModeDestroyPropertyBlob.assert_called_once_with(10, 7)
+        drm_api.drmDropMaster.assert_called_once_with(10)
+        close_fd.assert_called_once_with(10)
+
+    def testDrmOwnershipScopeAlwaysReleasesPointer(self):
+        pointer = ffi.new('int *')
+        release = mock.Mock()
+
+        with self.assertRaisesRegex(RuntimeError, 'test failure'):
+            with _DRMDevice._owned(
+                    lambda: pointer, release, 'not allocated') as owned:
+                self.assertEqual(pointer, owned)
+                raise RuntimeError('test failure')
+
+        release.assert_called_once_with(pointer)
+
     def testDrmDeviceDescription(self):
         display = object.__new__(KMSDisplay)
         display.device = '/dev/dri/card2'

@@ -90,6 +90,7 @@ ffi.cdef("""
 
     drmModeRes* drmModeGetResources(int fd);
     int drmSetMaster(int fd);
+    int drmDropMaster(int fd);
     drmModeConnector* drmModeGetConnector(int fd, unsigned int connectorId);
     void drmModeFreeConnector(drmModeConnector *ptr);
     drmModeEncoder* drmModeGetEncoder(int fd, unsigned int encoder_id);
@@ -105,6 +106,7 @@ ffi.cdef("""
     drmModePropertyRes* drmModeGetProperty(int fd, unsigned int property_id);
     void drmModeFreeProperty(drmModePropertyRes *ptr);
     int drmModeCreatePropertyBlob(int fd, const void *data, size_t length, unsigned int *id);
+    int drmModeDestroyPropertyBlob(int fd, unsigned int id);
     drmModeAtomicReq* drmModeAtomicAlloc(void);
     void drmModeAtomicFree(drmModeAtomicReq *req);
     int drmModeAtomicAddProperty(drmModeAtomicReq *req, unsigned int object_id, unsigned int property_id, unsigned long long value);
@@ -117,6 +119,7 @@ ffi.cdef("""
                       const unsigned int pitches[4], const unsigned int offsets[4],
                       const unsigned long long modifier[4], unsigned int *buf_id,
                       unsigned int flags);
+    int drmModeRmFB(int fd, unsigned int bufferId);
 
     // GBM
     typedef unsigned int uint32_t;
@@ -136,6 +139,7 @@ ffi.cdef("""
         uint32_t format, 
         uint32_t flags
     );
+    void gbm_surface_destroy(struct gbm_surface *surface);
     struct gbm_bo *gbm_surface_lock_front_buffer(struct gbm_surface *surface);
     void gbm_surface_release_buffer(struct gbm_surface *surface, struct gbm_bo *bo);
     int gbm_bo_get_plane_count(struct gbm_bo *bo);
@@ -172,6 +176,9 @@ ffi.cdef("""
         EGLSurface read, 
         EGLContext ctx
     );    
+    EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx);
+    EGLBoolean eglDestroySurface(EGLDisplay dpy, EGLSurface surface);
+    EGLBoolean eglTerminate(EGLDisplay dpy);
     
     /* Additional EGL functions */
     int eglBindAPI(unsigned int api);
