@@ -7,6 +7,10 @@ const state = {
   autoplay_interval: 30,
   autoplay_effects: [],
   error: null,
+  input_mode: 'effect',
+  ndi_source: null,
+  ndi_sources: [],
+  ndi_status: {},
 };
 
 const preview = {
@@ -26,6 +30,13 @@ const autoplayIntervalEl = document.getElementById('autoplay-interval');
 const statusEl = document.getElementById('status');
 const signalEl = document.getElementById('signal');
 const canvas = document.getElementById('swatch');
+const workspaceEl = document.getElementById('workspace');
+const modeEffectEl = document.getElementById('mode-effect');
+const modeNdiEl = document.getElementById('mode-ndi');
+const ndiSourceEl = document.getElementById('ndi-source');
+const ndiPanelEl = document.getElementById('ndi-panel');
+const ndiStatusEl = document.getElementById('ndi-status');
+const ndiErrorEl = document.getElementById('ndi-error');
 
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -46,6 +57,7 @@ async function init() {
   try {
     state.effects = await request('/api/effects');
     Object.assign(state, await request('/api/state'));
+    await refreshNdiSources();
     renderControls();
     await loadPreviewEffect(state.effect);
     setOnline(true);
@@ -101,13 +113,53 @@ function renderEffects() {
 }
 
 function renderControls() {
+  const effectMode = state.input_mode === 'effect';
   hueEl.value = state.hue;
   brightnessEl.value = state.brightness;
   autoplayEl.checked = state.autoplay;
+  modeEffectEl.classList.toggle('active', effectMode);
+  modeEffectEl.setAttribute('aria-pressed', String(effectMode));
+  modeNdiEl.classList.toggle('active', !effectMode);
+  modeNdiEl.setAttribute('aria-pressed', String(!effectMode));
+  workspaceEl.hidden = !effectMode;
+  ndiPanelEl.hidden = effectMode;
+  const ndiStatus = currentNdiStatus();
+  ndiStatusEl.hidden = effectMode || !ndiStatus;
+  ndiStatusEl.textContent = ndiStatus;
+  ndiErrorEl.hidden = effectMode || !state.error;
+  ndiErrorEl.textContent = state.error || '';
+  renderNdiSources();
   if (document.activeElement !== autoplayIntervalEl) {
     autoplayIntervalEl.value = Math.round(state.autoplay_interval);
   }
   renderEffects();
+}
+
+function renderNdiSources() {
+  const selected = state.ndi_source;
+  ndiSourceEl.replaceChildren();
+  if (!selected && state.ndi_sources.length === 0) {
+    ndiSourceEl.add(new Option('No NDI sources found', '', true, true));
+  }
+  if (selected && !state.ndi_sources.includes(selected)) {
+    ndiSourceEl.add(new Option(`${selected} (offline)`, selected, true, true));
+  }
+  for (const name of state.ndi_sources) {
+    ndiSourceEl.add(new Option(name, name, name === selected, name === selected));
+  }
+  if (!selected && state.ndi_sources.length) {
+    ndiSourceEl.selectedIndex = -1;
+  }
+}
+
+async function refreshNdiSources() {
+  try {
+    const result = await request('/api/ndi/sources');
+    state.ndi_sources = result.sources;
+    renderNdiSources();
+  } catch (error) {
+    console.error(error.message);
+  }
 }
 
 function setOnline(online, message) {
@@ -126,15 +178,32 @@ function setOnline(online, message) {
 }
 
 function currentStatus() {
+  if (state.input_mode === 'ndi') {
+    if (!state.ndi_source) return 'Select an NDI source';
+    return state.ndi_source;
+  }
   const effect = state.effects.find((item) => item.id === state.effect);
   return effect ? effect.name : 'Ready';
+}
+
+function currentNdiStatus() {
+  if (!state.ndi_source) return '';
+  if (!state.ndi_sources.includes(state.ndi_source)) return 'Offline';
+
+  const stats = state.ndi_status || {};
+  if (!stats.width || !stats.height) return 'Waiting for video';
+
+  const details = [`${stats.width}×${stats.height}`];
+  if (stats.fps) details.push(`${stats.fps.toFixed(1)} fps`);
+  if (Number.isFinite(stats.dropped)) details.push(`${stats.dropped} dropped`);
+  return details.join(' · ');
 }
 
 async function updateState(values) {
   Object.assign(state, values);
   renderControls();
 
-  if (values.effect) {
+  if (values.effect && state.input_mode === 'effect') {
     await loadPreviewEffect(values.effect);
   }
 
@@ -170,7 +239,7 @@ async function refreshState() {
   try {
     const previousEffect = state.effect;
     Object.assign(state, await request('/api/state'));
-    if (state.effect !== previousEffect) {
+    if (state.input_mode === 'effect' && state.effect !== previousEffect) {
       await loadPreviewEffect(state.effect);
     }
     setOnline(true);
@@ -327,6 +396,12 @@ autoplayEl.addEventListener('change', () => updateState({ autoplay: autoplayEl.c
 autoplayIntervalEl.addEventListener('change', () => updateState({
   autoplay_interval: Number(autoplayIntervalEl.value),
 }));
+modeEffectEl.addEventListener('click', () => updateState({ input_mode: 'effect' }));
+modeNdiEl.addEventListener('click', () => updateState({ input_mode: 'ndi' }));
+ndiSourceEl.addEventListener('change', () => {
+  if (ndiSourceEl.value) updateState({ ndi_source: ndiSourceEl.value, input_mode: 'ndi' });
+});
 
 setInterval(refreshState, 1500);
+setInterval(refreshNdiSources, 3000);
 init();

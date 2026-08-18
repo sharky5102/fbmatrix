@@ -11,6 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
 import common
+import assembly.yuv
+import ndi
 import shader_effect
 
 
@@ -23,6 +25,9 @@ class AppState:
         autoplay=False,
         autoplay_interval=30.0,
         autoplay_effects=None,
+        input_mode='effect',
+        ndi_source=None,
+        ndi_status=None,
     ):
         self.lock = threading.Lock()
         self.effect = effect
@@ -31,6 +36,9 @@ class AppState:
         self.autoplay = autoplay
         self.autoplay_interval = autoplay_interval
         self.autoplay_effects = autoplay_effects or []
+        self.input_mode = input_mode
+        self.ndi_source = ndi_source
+        self.ndi_status = ndi_status or {}
         self.error = None
 
     def snapshot(self):
@@ -42,6 +50,9 @@ class AppState:
                 'autoplay': self.autoplay,
                 'autoplay_interval': self.autoplay_interval,
                 'autoplay_effects': list(self.autoplay_effects),
+                'input_mode': self.input_mode,
+                'ndi_source': self.ndi_source,
+                'ndi_status': dict(self.ndi_status),
                 'error': self.error,
             }
 
@@ -51,8 +62,8 @@ class AppState:
                 setattr(self, key, value)
 
 
-class EffectRenderer:
-    def __init__(self, effects_dir, effects, width, height, state, commands):
+class InputRenderer:
+    def __init__(self, effects_dir, effects, width, height, state, commands, ndi_runtime=None):
         self.effects_dir = effects_dir
         self.effects = effects
         self.width = width
@@ -64,12 +75,21 @@ class EffectRenderer:
         self.current_effect = None
         self.failed_effect = None
         self.quad = None
+        self.ndi_runtime = ndi_runtime
+        self.ndi_receiver = None
+        self.current_ndi_source = None
+        self.ndi_quad = None
+        self.next_ndi_status = 0.0
         self.schedule_autoplay()
 
     def render(self):
         self.apply_commands()
         self.apply_autoplay()
         snapshot = self.state.snapshot()
+
+        if snapshot['input_mode'] == 'ndi':
+            self.render_ndi(snapshot)
+            return
 
         if snapshot['effect'] != self.current_effect and snapshot['effect'] != self.failed_effect:
             try:
@@ -84,6 +104,45 @@ class EffectRenderer:
         now = time.monotonic() - self.started
         self.quad.set_params(now, snapshot['hue'], snapshot['brightness'])
         self.quad.render()
+
+    def render_ndi(self, snapshot):
+        source = snapshot['ndi_source']
+        if not source:
+            self.state.update(error='Select an NDI source')
+            return
+        if self.ndi_runtime is None:
+            self.state.update(error='NDI is unavailable; set %s to libndi.so' % ndi.LIBRARY_ENV)
+            return
+        if source != self.current_ndi_source:
+            self.close_receiver()
+            try:
+                self.ndi_receiver = ndi.Receiver(self.ndi_runtime, source)
+                self.ndi_quad = self.ndi_quad or assembly.yuv.yuv422()
+                self.current_ndi_source = source
+                self.next_ndi_status = 0.0
+                self.state.update(error=None, ndi_status={})
+            except RuntimeError as e:
+                self.state.update(error=str(e))
+                return
+        try:
+            self.ndi_receiver.receive_video(self.ndi_quad.setUYVY, timeout_ms=2)
+            self.ndi_quad.render()
+            now = time.monotonic()
+            if now >= self.next_ndi_status:
+                self.state.update(ndi_status=self.ndi_receiver.stats())
+                self.next_ndi_status = now + 1.0
+        except RuntimeError as e:
+            self.state.update(error=str(e))
+
+    def close_receiver(self):
+        if self.ndi_receiver is not None:
+            self.ndi_receiver.close()
+        self.ndi_receiver = None
+        self.current_ndi_source = None
+        self.state.update(ndi_status={})
+
+    def close(self):
+        self.close_receiver()
 
     def apply_commands(self):
         while True:
@@ -101,12 +160,17 @@ class EffectRenderer:
                     'autoplay_effects',
                 )):
                     self.schedule_autoplay()
+                if command['values'].get('input_mode') == 'effect':
+                    self.close_receiver()
+                    self.state.update(error=None)
                 if 'effect' in command['values'] and command['values']['effect'] != self.failed_effect:
                     self.failed_effect = None
 
     def apply_autoplay(self):
         snapshot = self.state.snapshot()
         if not snapshot['autoplay']:
+            return
+        if snapshot['input_mode'] != 'effect':
             return
 
         now = time.monotonic()
@@ -159,6 +223,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.write_json(shader_effect.discover_effects(self.server.effects_dir))
             return
 
+        if parsed.path == '/api/ndi/sources':
+            discovery = self.server.ndi_discovery
+            self.write_json({
+                'available': discovery is not None,
+                'sources': discovery.sources() if discovery is not None else [],
+                'error': self.server.ndi_error,
+            })
+            return
+
         if parsed.path.startswith('/api/effects/') and parsed.path.endswith('/source'):
             self.write_effect_source(parsed.path)
             return
@@ -192,6 +265,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             if effect not in available:
                 raise ValueError('Unknown effect')
             values['effect'] = effect
+
+        if 'input_mode' in payload:
+            mode = str(payload['input_mode'])
+            if mode not in ('effect', 'ndi'):
+                raise ValueError('Unknown input mode')
+            values['input_mode'] = mode
+
+        if 'ndi_source' in payload:
+            source = payload['ndi_source']
+            values['ndi_source'] = None if source is None else str(source)
 
         if 'hue' in payload:
             values['hue'] = clamp(float(payload['hue']), 0.0, 1.0)
@@ -295,12 +378,15 @@ def parse_bool(value):
     raise ValueError('Expected boolean value')
 
 
-def create_server(host, port, web_dir, effects_dir, state, commands):
+def create_server(host, port, web_dir, effects_dir, state, commands,
+                  ndi_discovery=None, ndi_error=None):
     server = ThreadingHTTPServer((host, port), RequestHandler)
     server.web_dir = web_dir
     server.effects_dir = effects_dir
     server.app_state = state
     server.commands = commands
+    server.ndi_discovery = ndi_discovery
+    server.ndi_error = ndi_error
     return server
 
 
@@ -339,14 +425,32 @@ def main():
     )
     commands = queue.Queue()
 
-    server = create_server(args.host, args.port, web_dir, effects_dir, state, commands)
+    ndi_runtime = None
+    ndi_discovery = None
+    ndi_error = None
+    if os.environ.get(ndi.LIBRARY_ENV):
+        try:
+            ndi_runtime = ndi.Runtime()
+            ndi_discovery = ndi.Discovery(ndi_runtime)
+        except (ndi.NDIUnavailable, RuntimeError) as e:
+            ndi_error = str(e)
+
+    server = create_server(args.host, args.port, web_dir, effects_dir, state, commands,
+                           ndi_discovery, ndi_error)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     print('fbmserve listening on http://%s:%d/' % (args.host, args.port))
 
     matrix = common.renderer_from_args(args)
-    renderer = EffectRenderer(effects_dir, effects, matrix.source_columns, matrix.source_rows, state, commands)
-    matrix.run(renderer.render)
+    renderer = InputRenderer(effects_dir, effects, matrix.source_columns, matrix.source_rows,
+                             state, commands, ndi_runtime)
+    try:
+        matrix.run(renderer.render)
+    finally:
+        renderer.close()
+        server.shutdown()
+        if ndi_discovery is not None:
+            ndi_discovery.close()
 
 
 if __name__ == '__main__':

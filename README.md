@@ -299,6 +299,18 @@ sampling them down to the LEDs. Use `--source-scale`, `--source-columns` or
 `--source-rows` to tune the source resolution.
 
 The browser UI is served from `web/`, and effects are loaded from `effects/`.
+
+### NDI input
+
+`fbmserve.py` can optionally discover and receive NDI video using the native NDI
+runtime through CFFI. The NDI SDK library is not included. Point fbmatrix at an
+installed NDI 6 runtime, then select NDI and a discovered source in the web UI:
+
+    FBMATRIX_NDI_LIBRARY="/home/pi/NDI SDK for Linux/lib/aarch64-rpi4-linux-gnueabi/libndi.so" ./fbmserve.py
+
+If the variable is unset or the library cannot be loaded, effects continue to
+work and the UI reports NDI as unavailable when selected. Discovery refreshes
+periodically and preserves the selected source while it is offline.
 Effects use a Shadertoy-style fragment entry point:
 
     void mainImage(out vec4 fragColor, in vec2 fragCoord)

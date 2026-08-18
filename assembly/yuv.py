@@ -2,7 +2,7 @@ import geometry
 import geometry.simple
 import OpenGL.GL as gl
 
-class bytearray(geometry.simple.texquad):
+class yuv420(geometry.simple.texquad):
     fragment_code = """
         uniform sampler2D texy;
         uniform sampler2D texu;
@@ -28,7 +28,7 @@ class bytearray(geometry.simple.texquad):
         self.crB = gl.glGenTextures(1)
         self.crR = gl.glGenTextures(1)
         self.supersample = supersample
-        super(bytearray, self).__init__()
+        super(yuv420, self).__init__()
 
     def getVertices(self):
         verts = [(-1, 1), (+1, 1), (+1, -1), (-1, -1)]
@@ -84,5 +84,46 @@ class bytearray(geometry.simple.texquad):
         gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, hw, hh, 0, gl.GL_RED, gl.GL_UNSIGNED_BYTE, bytes(data[2]))
         if self.supersample:
             gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
-        
 
+
+class yuv422(geometry.simple.texquad):
+    """Packed UYVY 4:2:2 upload and GPU conversion used by NDI."""
+    fragment_code = """
+        uniform sampler2D tex;
+        uniform highp float width;
+        out highp vec4 f_color;
+        in highp vec2 v_texcoor;
+
+        void main()
+        {
+            highp vec4 pair = textureLod(tex, v_texcoor, 0.0);
+            highp float pixel = floor(v_texcoor.x * width);
+            highp float y = mod(pixel, 2.0) < 1.0 ? pair.g : pair.a;
+            highp float u = pair.r - 0.5;
+            highp float v = pair.b - 0.5;
+            f_color = vec4(y + 1.402 * v,
+                           y - 0.344 * u - 0.714 * v,
+                           y + 1.772 * u, 1.0);
+        } """
+
+    def __init__(self):
+        self.tex = gl.glGenTextures(1)
+        self.width = 1
+        super(yuv422, self).__init__()
+
+    def draw(self):
+        loc = gl.glGetUniformLocation(self.program, 'width')
+        gl.glUniform1f(loc, self.width)
+        super(yuv422, self).draw()
+
+    def setUYVY(self, data, width, height, stride):
+        if stride != width * 2:
+            data = b''.join(bytes(data[y * stride:y * stride + width * 2])
+                            for y in range(height))
+        self.width = width
+        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.tex)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, width // 2, height, 0,
+                        gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data)

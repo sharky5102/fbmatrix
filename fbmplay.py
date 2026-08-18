@@ -2,7 +2,7 @@
 import fbmatrix
 import argparse
 import time
-import assembly.yuv420
+import assembly.yuv
 from ffpyplayer.player import MediaPlayer
 import numpy as np
 from pyrr import Matrix44
@@ -62,6 +62,6 @@ player = MediaPlayer(args.videofile, ff_opts={'out_fmt':'yuv420p'})
 
 matrix = common.renderer_from_args(args)
 
-bytearray = assembly.yuv420.bytearray(supersample = args.supersample)
+bytearray = assembly.yuv.yuv420(supersample = args.supersample)
 
 matrix.run(render)

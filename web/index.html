@@ -16,7 +16,12 @@
       <div class="signal" id="signal"></div>
     </header>
 
-    <section class="workspace">
+    <nav class="mode-switch" aria-label="Input mode">
+      <button id="mode-effect" type="button" data-mode="effect">Effect</button>
+      <button id="mode-ndi" type="button" data-mode="ndi">NDI</button>
+    </nav>
+
+    <section class="workspace" id="workspace">
       <nav class="effects" id="effects" aria-label="Effects"></nav>
 
       <section class="panel">
@@ -25,24 +30,35 @@
         </div>
 
         <div class="controls">
-          <label>
-            <span>Hue</span>
-            <input id="hue" type="range" min="0" max="1" step="0.001" value="0">
-          </label>
-          <label>
-            <span>Brightness</span>
-            <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
-          </label>
-          <label class="check-row">
-            <input id="autoplay" type="checkbox">
-            <span>Autoplay</span>
-          </label>
-          <label>
-            <span>Interval seconds</span>
-            <input id="autoplay-interval" type="number" min="1" max="3600" step="1" value="30">
-          </label>
+          <div class="effect-settings" id="effect-settings">
+            <label>
+              <span>Hue</span>
+              <input id="hue" type="range" min="0" max="1" step="0.001" value="0">
+            </label>
+            <label>
+              <span>Brightness</span>
+              <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
+            </label>
+            <label class="check-row">
+              <input id="autoplay" type="checkbox">
+              <span>Autoplay</span>
+            </label>
+            <label>
+              <span>Interval seconds</span>
+              <input id="autoplay-interval" type="number" min="1" max="3600" step="1" value="30">
+            </label>
+          </div>
         </div>
       </section>
+    </section>
+
+    <section class="ndi-panel" id="ndi-panel" hidden>
+      <label>
+        <span>NDI source</span>
+        <select id="ndi-source"></select>
+        <small id="ndi-status" class="input-status" hidden></small>
+        <strong id="ndi-error" class="input-error" hidden></strong>
+      </label>
     </section>
   </main>
 
