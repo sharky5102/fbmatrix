@@ -23,6 +23,7 @@ import displays.hub75e
 import geometry.simple
 import assembly.tree
 import fbmatrix
+import led_effect
 import ledlayout
 from kms import KMSDisplay, _DRMDevice
 from ffi_backend import (
@@ -212,6 +213,68 @@ class TestWS2811(unittest.TestCase):
         fbmatrix.renderer(
             display='ws2811', layout=self.layout, emulate=True,
             backend='headless')
+
+    def testEmitterBufferPreservesStringRowsAndLedColumns(self):
+        layout = [
+            [[0, 0, 0, 0], [1, 0, 0, 0]],
+            [[0, 1, 0, 0]],
+        ]
+        renderer = fbmatrix.renderer(
+            display='ws2811', layout=layout, backend='headless')
+        self.assertEqual((2, 2),
+                         (renderer.ledfbo.width, renderer.ledfbo.height))
+
+        renderer.ledbuffer.set_effect_source("""
+            void mainLed(out vec4 ledColor, in vec3 ledPosition,
+                         in float ledIndex, in int stringIndex,
+                         in int sourceMode) {
+                ledColor = vec4(ledIndex, float(stringIndex), 0.0, 1.0);
+            }
+        """)
+        screen = fbo.FBO(self.width, 2)
+        with screen:
+            renderer.render = lambda: render_solid((0, 0, 0))
+            renderer.display()
+        with renderer.ledfbo:
+            data = gl.glReadPixels(
+                0, 0, 2, 2, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+        pixels = np.frombuffer(data, dtype=np.uint8).reshape((2, 2, 4))
+        self.assertEqual((0, 0), tuple(pixels[0, 0, :2]))
+        self.assertEqual((255, 0), tuple(pixels[0, 1, :2]))
+        self.assertEqual((0, 255), tuple(pixels[1, 0, :2]))
+        self.assertEqual((0, 0, 0), tuple(pixels[1, 1, :3]))
+
+    def testEmitterEffectsCompileAndRenderForTwoDimensionalLayout(self):
+        layout = [
+            [[0, 0, 0, 0], [1, 0, 0, 0], [2, 0, 0, 0]],
+            [[0, 1, 0, 0], [1, 1, 0, 0]],
+        ]
+        renderer = fbmatrix.renderer(
+            display='ws2811', layout=layout,
+            backend='headless')
+
+        with renderer.mainfbo:
+            render_solid((0.25, 0.5, 0.75))
+
+        for effect in led_effect.discover_effects('led_effects'):
+            renderer.ledbuffer.set_effect_source(
+                led_effect.load_effect_source('led_effects', effect['id']))
+            renderer.ledbuffer.set_params(1.25, 0.3, 0.8)
+
+            while gl.glGetError() != gl.GL_NO_ERROR:
+                pass
+            with renderer.ledfbo:
+                renderer.clear()
+                renderer.ledbuffer.render()
+                data = gl.glReadPixels(
+                    0, 0, 3, 2, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+            self.assertEqual(
+                gl.GL_NO_ERROR, gl.glGetError(),
+                'GL error while rendering emitter effect %s' % effect['id'])
+            self.assertEqual(
+                3 * 2 * 4, len(data),
+                'Unexpected output size for emitter effect %s' % effect['id'])
 
     def testOutputHeightUsesLongestString(self):
         layout = [

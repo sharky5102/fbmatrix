@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse
 import common
 import assembly.yuv
 import ndi
+import led_effect
 import shader_effect
 
 
@@ -28,6 +29,7 @@ class AppState:
         input_mode='effect',
         ndi_source=None,
         ndi_status=None,
+        led_effect_id='default',
     ):
         self.lock = threading.Lock()
         self.effect = effect
@@ -39,6 +41,7 @@ class AppState:
         self.input_mode = input_mode
         self.ndi_source = ndi_source
         self.ndi_status = ndi_status or {}
+        self.led_effect = led_effect_id
         self.error = None
 
     def snapshot(self):
@@ -53,6 +56,7 @@ class AppState:
                 'input_mode': self.input_mode,
                 'ndi_source': self.ndi_source,
                 'ndi_status': dict(self.ndi_status),
+                'led_effect': self.led_effect,
                 'error': self.error,
             }
 
@@ -63,7 +67,8 @@ class AppState:
 
 
 class InputRenderer:
-    def __init__(self, effects_dir, effects, width, height, state, commands, ndi_runtime=None):
+    def __init__(self, effects_dir, effects, width, height, state, commands,
+                 ndi_runtime=None, matrix=None, led_effects_dir='led_effects'):
         self.effects_dir = effects_dir
         self.effects = effects
         self.width = width
@@ -80,12 +85,30 @@ class InputRenderer:
         self.current_ndi_source = None
         self.ndi_quad = None
         self.next_ndi_status = 0.0
+        self.matrix = matrix
+        self.led_effects_dir = led_effects_dir
+        self.current_led_effect = None
+        self.failed_led_effect = None
         self.schedule_autoplay()
 
     def render(self):
         self.apply_commands()
         self.apply_autoplay()
         snapshot = self.state.snapshot()
+
+        if (self.has_ledbuffer() and
+                snapshot['led_effect'] != self.current_led_effect and
+                snapshot['led_effect'] != self.failed_led_effect):
+            try:
+                self.load_led_effect(snapshot['led_effect'])
+            except (RuntimeError, FileNotFoundError) as e:
+                self.failed_led_effect = snapshot['led_effect']
+                self.state.update(error=str(e))
+
+        if self.has_ledbuffer():
+            now = time.monotonic() - self.started
+            self.matrix.ledbuffer.set_params(
+                now, snapshot['hue'], snapshot['brightness'])
 
         if snapshot['input_mode'] == 'ndi':
             self.render_ndi(snapshot)
@@ -165,6 +188,9 @@ class InputRenderer:
                     self.state.update(error=None)
                 if 'effect' in command['values'] and command['values']['effect'] != self.failed_effect:
                     self.failed_effect = None
+                if ('led_effect' in command['values'] and
+                        command['values']['led_effect'] != self.failed_led_effect):
+                    self.failed_led_effect = None
 
     def apply_autoplay(self):
         snapshot = self.state.snapshot()
@@ -209,6 +235,17 @@ class InputRenderer:
         self.failed_effect = None
         self.state.update(error=None)
 
+    def load_led_effect(self, effect_id):
+        source = led_effect.load_effect_source(
+            self.led_effects_dir, effect_id)
+        self.matrix.ledbuffer.set_effect_source(source)
+        self.current_led_effect = effect_id
+        self.failed_led_effect = None
+        self.state.update(error=None)
+
+    def has_ledbuffer(self):
+        return self.matrix is not None and hasattr(self.matrix, 'ledbuffer')
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = 'fbmserve/0.1'
@@ -223,6 +260,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.write_json(shader_effect.discover_effects(self.server.effects_dir))
             return
 
+        if parsed.path == '/api/led-effects':
+            self.write_json(led_effect.discover_effects(
+                self.server.led_effects_dir))
+            return
+
         if parsed.path == '/api/ndi/sources':
             discovery = self.server.ndi_discovery
             self.write_json({
@@ -234,6 +276,11 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith('/api/effects/') and parsed.path.endswith('/source'):
             self.write_effect_source(parsed.path)
+            return
+
+        if (parsed.path.startswith('/api/led-effects/') and
+                parsed.path.endswith('/source')):
+            self.write_led_effect_source(parsed.path)
             return
 
         self.serve_static(parsed.path)
@@ -265,6 +312,14 @@ class RequestHandler(BaseHTTPRequestHandler):
             if effect not in available:
                 raise ValueError('Unknown effect')
             values['effect'] = effect
+
+        if 'led_effect' in payload:
+            effect = str(payload['led_effect'])
+            available = {item['id'] for item in led_effect.discover_effects(
+                self.server.led_effects_dir)}
+            if effect not in available:
+                raise ValueError('Unknown LED effect')
+            values['led_effect'] = effect
 
         if 'input_mode' in payload:
             mode = str(payload['input_mode'])
@@ -351,6 +406,24 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def write_led_effect_source(self, request_path):
+        parts = request_path.strip('/').split('/')
+        if len(parts) != 4:
+            self.send_error(404)
+            return
+        try:
+            source = led_effect.load_effect_source(
+                self.server.led_effects_dir, parts[2])
+        except (ValueError, FileNotFoundError):
+            self.send_error(404)
+            return
+        data = source.encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def write_json(self, payload, status=200):
         data = json.dumps(payload).encode('utf-8')
         self.send_response(status)
@@ -379,10 +452,12 @@ def parse_bool(value):
 
 
 def create_server(host, port, web_dir, effects_dir, state, commands,
-                  ndi_discovery=None, ndi_error=None):
+                  ndi_discovery=None, ndi_error=None,
+                  led_effects_dir='led_effects'):
     server = ThreadingHTTPServer((host, port), RequestHandler)
     server.web_dir = web_dir
     server.effects_dir = effects_dir
+    server.led_effects_dir = led_effects_dir
     server.app_state = state
     server.commands = commands
     server.ndi_discovery = ndi_discovery
@@ -397,6 +472,7 @@ def main():
     parser.add_argument('--host', default='0.0.0.0', help='HTTP server bind address')
     parser.add_argument('--port', type=int, default=8080, help='HTTP server port')
     parser.add_argument('--effects-dir', default='effects', help='Directory containing .frag effects')
+    parser.add_argument('--led-effects-dir', default='led_effects', help='Directory containing per-emitter .frag effects')
     parser.add_argument('--web-dir', default='web', help='Directory containing the web UI')
     parser.add_argument('--effect', default=None, help='Initial effect id')
     parser.add_argument('--hue', type=float, default=0.0, help='Initial hue value from 0.0 to 1.0')
@@ -406,6 +482,7 @@ def main():
     args = parser.parse_args()
 
     effects_dir = os.path.abspath(args.effects_dir)
+    led_effects_dir = os.path.abspath(args.led_effects_dir)
     web_dir = os.path.abspath(args.web_dir)
     effects = shader_effect.discover_effects(effects_dir)
     if not effects:
@@ -414,7 +491,6 @@ def main():
     effect = args.effect or effects[0]['id']
     if effect not in {item['id'] for item in effects}:
         raise RuntimeError('Unknown effect: %s' % effect)
-
     state = AppState(
         effect,
         clamp(args.hue, 0.0, 1.0),
@@ -436,14 +512,15 @@ def main():
             ndi_error = str(e)
 
     server = create_server(args.host, args.port, web_dir, effects_dir, state, commands,
-                           ndi_discovery, ndi_error)
+                           ndi_discovery, ndi_error, led_effects_dir)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     print('fbmserve listening on http://%s:%d/' % (args.host, args.port))
 
     matrix = common.renderer_from_args(args)
     renderer = InputRenderer(effects_dir, effects, matrix.source_columns, matrix.source_rows,
-                             state, commands, ndi_runtime)
+                             state, commands, ndi_runtime, matrix,
+                             led_effects_dir)
     try:
         matrix.run(renderer.render)
     finally:

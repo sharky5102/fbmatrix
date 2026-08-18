@@ -49,8 +49,9 @@ def load_layout(filename, preserve_source_modes=False):
 
 def renderer_from_args(args, preserve_source_modes=False):
     layout = None
+    display = 'ws2811' if args.emulate else args.display
 
-    if args.display == 'ws2811' or args.emulate:
+    if display == 'ws2811':
         layout = load_layout(args.layout, preserve_source_modes=preserve_source_modes)
 
     if args.source_scale <= 0:
@@ -59,7 +60,7 @@ def renderer_from_args(args, preserve_source_modes=False):
         raise RuntimeError('--source-columns must be greater than zero')
     if args.source_rows is not None and args.source_rows <= 0:
         raise RuntimeError('--source-rows must be greater than zero')
-    if (args.display == 'ws2811' and
+    if (display == 'ws2811' and
             (args.source_columns is not None or args.source_rows is not None)):
         raise RuntimeError(
             '--source-columns and --source-rows are not supported for ws2811; '
@@ -77,7 +78,7 @@ def renderer_from_args(args, preserve_source_modes=False):
         emulate=args.emulate,
         preview=args.preview,
         raw=args.raw,
-        display=args.display,
+        display=display,
         rows=args.rows,
         columns=args.columns,
         source_rows=source_rows,

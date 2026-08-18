@@ -62,10 +62,12 @@ class tree(geometry.base):
         
     attributes = { 'position' : 3, 'id' : 1 }
         
-    def __init__(self, jsondata, supersample=0):
+    def __init__(self, jsondata, supersample=0, emitter_shape=None,
+                 string_lengths=None):
         self.lamps = ledlayout.require_xyzc_layout(jsondata)
         self.tex = 0
-        self.supersample = supersample
+        self.direct_emitter_texture = emitter_shape is not None
+        self.supersample = 0 if emitter_shape is not None else supersample
         self.time = 0
 
         # Present the lamp locations as a single-row texture. Modern OpenGL
@@ -73,13 +75,25 @@ class tree(geometry.base):
         self.mapwidth = len(self.lamps)
 
         data = np.zeros(self.mapwidth, (np.float32, 4))
-        bounds = ledlayout.active_xy_bounds(self.lamps)
-        for i in range(0, len(self.lamps)):
-            lamp = self.lamps[i]
-            data[i][0], data[i][1] = ledlayout.normalized_xy(
-                lamp[0], lamp[1], bounds)
-            data[i][2] = lamp[2];
-            data[i][3] = lamp[3];
+        if emitter_shape is not None:
+            width, height = emitter_shape
+            flat_index = 0
+            for string_index, string_length in enumerate(string_lengths):
+                for led_index in range(string_length):
+                    data[flat_index][0] = (led_index + 0.5) / width
+                    data[flat_index][1] = (string_index + 0.5) / height
+                    # A mode outside the source-mode range means that lamp.xy
+                    # addresses the already-rendered emitter texture directly.
+                    data[flat_index][3] = 5
+                    flat_index += 1
+        else:
+            bounds = ledlayout.active_xy_bounds(self.lamps)
+            for i in range(0, len(self.lamps)):
+                lamp = self.lamps[i]
+                data[i][0], data[i][1] = ledlayout.normalized_xy(
+                    lamp[0], lamp[1], bounds)
+                data[i][2] = lamp[2];
+                data[i][3] = lamp[3];
         
         self.lamptex = gl.glGenTextures(1)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.lamptex)
@@ -132,7 +146,8 @@ class tree(geometry.base):
         gl.glUniform1i(loc, 0)
         gl.glActiveTexture(gl.GL_TEXTURE0)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.tex)
-        gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+        if not self.direct_emitter_texture:
+            gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
 
         loc = gl.glGetUniformLocation(self.program, "lamptex")
         gl.glUniform1i(loc, 1)

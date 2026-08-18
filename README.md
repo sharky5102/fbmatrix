@@ -324,3 +324,18 @@ Effects use a Shadertoy-style fragment entry point:
 The renderer provides `iTime`, `iResolution`, `iHue` and `iBrightness`
 uniforms. The usual output flags such as `--display`, `--layout`, `--emulate`,
 `--preview` and `--raw` are shared with `fbmtest.py` and `fbmplay.py`.
+
+For WS2811 output, `fbmserve.py` can apply a per-emitter shader selected in
+the web UI after the source framebuffer is rendered and before WS2811 pulses
+are generated.
+
+Emitter effects are loaded from `led_effects/`. The output texture has one row
+per string and one column per LED, and shaders use this entry point:
+
+    void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex,
+                 in int stringIndex, in int sourceMode)
+
+`ledIndex` is the LED's column within its string. The shader can call
+`defaultSource(ledPosition, sourceMode)` to preserve layout source modes and
+sample the underlying framebuffer, call `sampleSource(ledPosition)` directly,
+or ignore the source framebuffer.

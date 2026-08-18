@@ -6,8 +6,11 @@ import pyrr
 from pyrr import Matrix44
 
 class tree():
-    def __init__(self, layout, supersample=0):
-        self.tree = geometry.tree.tree(layout, supersample=supersample)
+    def __init__(self, layout, supersample=0, emitter_shape=None,
+                 string_lengths=None):
+        self.tree = geometry.tree.tree(
+            layout, supersample=supersample, emitter_shape=emitter_shape,
+            string_lengths=string_lengths)
         self.lt = geometry.simple.texquad()
         
     def setProjection(self, M):

@@ -12,6 +12,7 @@ import OpenGL.GLUT as glut
 import assembly.tree
 import displays.hub75e
 import displays.ws2811
+import displays.ws2811_ledbuffer
 import fbo
 import geometry.simple
 import ledlayout
@@ -121,6 +122,11 @@ class renderer(object):
             self.clear()
             self.render()
 
+        if self.displaytype == 'ws2811':
+            with self.ledfbo:
+                self.clear()
+                self.ledbuffer.render()
+
         gl.glClearColor(0, 0, 0, 0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
@@ -221,9 +227,18 @@ class renderer(object):
         if self.displaytype == 'ws2811':
             if self.layout is None:
                 raise RuntimeError('WS2811 display requires a layout argument')
+            self.ledbuffer = displays.ws2811_ledbuffer.ledbuffer(
+                self.layout, supersample=self.supersample)
+            self.ledbuffer.setTexture(self.mainfbo.getTexture())
+            self.ledfbo = fbo.FBO(
+                self.ledbuffer.width,
+                self.ledbuffer.height,
+                mag_filter=gl.GL_NEAREST,
+                min_filter=gl.GL_NEAREST,
+            )
             self.signalgenerator = displays.ws2811.signalgenerator(
                 self.layout, supersample=self.supersample)
-            self.signalgenerator.setTexture(self.mainfbo.getTexture())
+            self.signalgenerator.setTexture(self.ledfbo.getTexture())
         elif self.displaytype == 'hub75e':
             self.signalgenerator = displays.hub75e.signalgenerator(
                 columns=self.columns,
@@ -244,8 +259,11 @@ class renderer(object):
                 raise RuntimeError('Emulation requires a layout argument')
             self.tree = assembly.tree.tree(
                 displays.ws2811.flatten_layout(self.layout),
-                supersample=self.supersample)
-            self.tree.setTexture(self.mainfbo.getTexture())
+                supersample=self.supersample,
+                emitter_shape=(self.ledbuffer.width, self.ledbuffer.height),
+                string_lengths=[len(string)
+                                for string in self.ledbuffer.strings])
+            self.tree.setTexture(self.ledfbo.getTexture())
 
     def init_glut(self):
         glut.glutInit()

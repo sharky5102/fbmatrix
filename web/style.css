@@ -76,6 +76,15 @@ h1 {
   letter-spacing: 0;
 }
 
+h2 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 p {
   margin: 8px 0 0;
   color: var(--muted);
@@ -142,6 +151,12 @@ p {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.lists {
+  display: grid;
+  align-content: start;
+  gap: 22px;
 }
 
 .effect-row {
@@ -284,6 +299,10 @@ input[type="checkbox"] {
   .effects {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lists {
+    gap: 18px;
   }
 
   .effect-row {
