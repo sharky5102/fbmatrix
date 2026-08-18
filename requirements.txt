@@ -3,3 +3,4 @@ numpy
 pyrr
 pytest
 cffi
+ffpyplayer

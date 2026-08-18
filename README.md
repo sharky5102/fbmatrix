@@ -2,11 +2,12 @@
 
 FBMatrix is a library and toolset to drive both HUB75 RGB matrix panels and ws2811 LED strings. FBMatrix first renders the target frame in memory and then drives the necessary outputs to render that frame on the LED device. All output signal processing is done by the V3D core in the raspberry pi, leaving the CPU free to do other things.
 
-This does require some specific DPI setup of the raspberry pi, depending on the output device, see below.
+This requires the Raspberry Pi full KMS driver and its atomic DRM/KMS API. The
+legacy framebuffer driver and FKMS (`vc4-fkms-v3d`) are not supported.
 
 Right now, FBMatrix:
 - Supports HUB75(e) RGB matrix displays up to 1920x32@60fps pixels with 12 BCM bitplanes
-- Supports WS281x RGB strings, up to 14 strings of 500 pixels, arbitrary positioning of the LEDs within a 2d field that the image is mapped to
+- Supports WS281x RGB strings, up to 14 strings of 2000 pixels, arbitrary positioning of the LEDs within a 2d field that the image is mapped to
 
 ### Features
 - Utilizes GPU and V3D framebuffer to form 24 synchronized data streams with clock rate up to 100s of Mhz (but most HUB75 displays are limited to 30Mhz)
@@ -14,8 +15,8 @@ Right now, FBMatrix:
 - CPU usage relative to changes in the image; no change in image -> no CPU usage
 - Rendering either by uploading RGB uint data, or by using OpenGL
 - HUB75: supports 12-bit BCM, 1920x32 @ 60fps [using 25Mhz clock rate] with a single channel, currently only 1/16 scan with "standard" driver chips, but it is trivial to support 1/32 and others.
-- WS281x: supports 24-bit color up to 14 parallel strings of 500 pixels each
-  @ 60fps
+- WS281x: supports 24-bit color on up to 14 parallel strings of 2000 pixels
+  each; the frame rate depends on the longest string
 - WS281x: supports arbitrary pixel layout by providing a JSON file with pixel coordinates
 - Provides fbmserve.py for selecting GLSL fragment shader effects from a browser.
 - Audio port usable at the same time
@@ -28,10 +29,12 @@ Right now, FBMatrix:
 ### Quick setup for HUB75 RGB matrices
 **Assuming 1/16 scan RGB matrix**
 
-This assumes a clean NOOBS install. It should be booting into X-Windows (not a command prompt)
-and networking should be configured and working.
+This assumes a current Raspberry Pi OS installation with networking and SSH
+configured. A text console is recommended because FBMatrix needs DRM master;
+stop the display manager first if one is running.
 
-1. Make sure you can access your pi over the network via SSH. You will not be able to use the HDMI port together with FBMatrix (although I think it is possible, just haven't spent to time to find the right configuration). If you can't access your pi via ssh, you can set it up using
+1. Make sure you can access your Pi over the network via SSH. If SSH is not
+   enabled, run:
 
 		sudo raspi-config
 		
@@ -45,25 +48,49 @@ and networking should be configured and working.
    dtoverlay=vc4-kms-dpi-generic,rgb888
    ```
 
-   This is the only boot configuration FBMatrix requires. It creates the KMS
-   mode itself at startup, so no framebuffer dimensions, DPI group/mode, or
-   `dpi_timings` setting is needed.
+   This selects the full KMS driver. Do not use `vc4-fkms-v3d` or another FKMS
+   overlay: FBMatrix requires atomic KMS modesetting. This is the only boot
+   configuration FBMatrix requires. It creates the output mode itself at
+   startup, so no framebuffer dimensions, DPI group/mode, or `dpi_timings`
+   setting is needed.
 
 3. Power off the pi, and attach the RGB bonnet and RGB display to the bonnet. Make sure the RGB matrix also has power.
 
-4. Boot the pi. While it boots, your LED matrix will start to display some junk. This is because it is interpreting the boot sequence output by DPI as a data signal. Just ignore it. 
+4. Boot the pi. Once it has booted, ssh to it and run:
 
-5. Once the pi has booted, ssh to your pi, and run:
+   ```bash
+   sudo apt install python3-venv
+   git clone https://github.com/sharky5102/fbmatrix.git
+   cd fbmatrix
+   python3 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements.txt
+   ```
 
-		pip3 install ffpyplayer pyrr numpy PyOpenGL
-		git clone https://github.com/sharky5102/fbmatrix.git
-		cd fbmatrix
-		export DISPLAY=:0
-		./fbmplay some_video.mp4
+   For HUB75 displays, you can now play a video:
+   ```
+   ./fbmplay some_video.mp4
+   ```
+
+   or, on ws2811, first generate a layout:
+   ```
+   ./generate-layout --rows 20 --columns 100 > layout.json
+   ```
+
+   and then play a video:
+
+   ```
+   ./fbmplay some_video.mp4 --display ws2811
+   ```
+
+   Activate the environment again in each new shell before running FBMatrix:
+
+   ```bash
+   source .venv/bin/activate
+   ```
 
 Presto! You should see a beautiful rendering of your video on your RGB matrix, with sound playing from the audio jack.
-
-*If someone is interested, I think we should be able to run with HDMI enabled for your *actual* monitor, and the second "monitor" providing the DPI output. This would also fix the junk display output during boot.*
 
 ### Technical overview
 FBMatrix works quite differently than other RGB driver libraries like the excellent rgbmatrix library. Instead of the CPU driving the GPIO pins in the correct order at the correct time, FBMatrix utilizes the DPI output driver of the video card on the Raspberry Pi4. 
@@ -85,8 +112,8 @@ To use HUB75e, we use the following rendering method (assuming 1/16 scan RGB mat
 - The first line cannot be used to output OE, since no data is loaded, which increases the scanlines by one. The last line is used to zero out the shift registers on the display. This gives us the extra 2 framebuffer rows.
 
 ### Using WS281x output
-FBMatrix also supports using WS281x "neopixel" LED strings. Currently, only
-a 500-pixel universe can be driven from each output pin. One way of physically
+FBMatrix also supports using WS281x "neopixel" LED strings. Currently, up to
+2000 LEDs can be driven from each output pin. One way of physically
 connecting the LED strings to your Pi is by using the RGB matrix bonnet, because it
 contains a 3.3v to 5.0v level shifter for all the output pins. In that case
 you simply connect data pins of the 16-pin cable (for example, the R1 pin) to
@@ -108,15 +135,15 @@ the WS281x reset gap between frames.
 
 The outer array in `layout.json` contains the output strings, and each string
 contains its LED positions in wire order. Strings can have different lengths,
-but each is currently limited to 500 LEDs. No padding is required. Up to 14
+but each is currently limited to 2000 LEDs. No padding is required. Up to 14
 strings are supported.
 An empty inner array leaves that output pin unused while retaining later string
 numbers.
 
-`generate-layout.py` groups generated LEDs into strings of at most 500 LEDs.
+`generate-layout.py` groups generated LEDs into strings of 500 LEDs by default.
 For radial layouts, a string contains only whole fixed sections, so
 `--string-leds` must be a multiple of `--section-leds`. When it is omitted, the
-generator uses the largest whole-section string that fits the 500-LED limit.
+generator uses the largest whole-section string up to the default 500 LEDs.
 For example, `--section-leds 200 --string-leds 200` assigns one section to each
 string and produces an active output resolution of 840x200.
 

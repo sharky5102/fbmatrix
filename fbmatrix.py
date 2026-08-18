@@ -162,7 +162,7 @@ class renderer(object):
                 hasattr(self.display_backend, 'consume_timings')):
             timings = self.display_backend.consume_timings()
             if timings is not None:
-                message += ', GPU %.1f ms, KMS %.1f ms' % timings
+                message += ', GPU %.1f ms, KMS (wait for vsync) %.1f ms' % timings
         if sys.stderr.isatty():
             print('\r' + message, end='', file=sys.stderr, flush=True)
         else:
