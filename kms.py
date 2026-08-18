@@ -1,5 +1,7 @@
+import glob
 import os
 import select
+import sys
 import time
 
 import OpenGL.GL as gl
@@ -49,8 +51,8 @@ class KMSDisplay:
     """Desktop OpenGL display backed by EGL, GBM, and atomic DRM/KMS."""
 
     def __init__(self, width, height, clock, vfp=0, vsync=0, vbp=0,
-                 device="/dev/dri/card1"):
-        self.fd = os.open(device, os.O_RDWR | os.O_CLOEXEC)
+                 device=None):
+        self.device, self.fd = self._open_dpi_device(device)
         if drm.drmSetMaster(self.fd) != 0:
             error = ffi.errno
             os.close(self.fd)
@@ -58,7 +60,7 @@ class KMSDisplay:
                 "Unable to become DRM master for %s (errno=%d: %s). "
                 "Stop the compositor/display manager using this DRM card "
                 "or run FBMatrix from a text console." %
-                (device, error, os.strerror(error)))
+                (self.device, error, os.strerror(error)))
         self.format = GBM_FORMAT_XRGB8888
         self.current_bo = ffi.NULL
         self.framebuffers = {}
@@ -71,6 +73,7 @@ class KMSDisplay:
         self.height = height
 
         self._initialize_drm()
+        print(self._device_description(), file=sys.stderr)
         self._initialize_egl()
 
         gl.glViewport(0, 0, self.width, self.height)
@@ -80,6 +83,64 @@ class KMSDisplay:
         gl.glClearColor(0, 0, 0, 0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
         self.present()
+
+    @staticmethod
+    def _card_devices():
+        devices = [
+            path for path in glob.glob('/dev/dri/card*')
+            if os.path.basename(path)[4:].isdigit()
+        ]
+        return sorted(
+            devices, key=lambda path: int(os.path.basename(path)[4:]))
+
+    @classmethod
+    def _open_dpi_device(cls, device=None):
+        devices = [device] if device is not None else cls._card_devices()
+        if not devices:
+            raise RuntimeError("No DRM card devices were found in /dev/dri")
+
+        errors = []
+        for path in devices:
+            try:
+                fd = os.open(path, os.O_RDWR | os.O_CLOEXEC)
+            except OSError as error:
+                errors.append('%s: %s' % (path, error.strerror))
+                continue
+            keep_open = False
+            try:
+                keep_open = cls._device_has_dpi(fd)
+                if keep_open:
+                    return path, fd
+            except RuntimeError as error:
+                errors.append('%s: %s' % (path, error))
+            finally:
+                if not keep_open:
+                    os.close(fd)
+
+        message = "DPI output was not detected on: %s" % ', '.join(devices)
+        if errors:
+            message += " (%s)" % '; '.join(errors)
+        raise RuntimeError(message)
+
+    @staticmethod
+    def _device_has_dpi(fd):
+        resources = drm.drmModeGetResources(fd)
+        if resources == ffi.NULL:
+            raise RuntimeError("failed to retrieve DRM resources")
+        try:
+            for i in range(resources.count_connectors):
+                connector = drm.drmModeGetConnector(
+                    fd, resources.connectors[i])
+                if connector == ffi.NULL:
+                    continue
+                try:
+                    if connector.connector_type == DRM_MODE_CONNECTOR_DPI:
+                        return True
+                finally:
+                    drm.drmModeFreeConnector(connector)
+            return False
+        finally:
+            drm.drmModeFreeResources(resources)
 
     def _initialize_drm(self):
         resources = drm.drmModeGetResources(self.fd)
@@ -101,6 +162,7 @@ class KMSDisplay:
             if connector == ffi.NULL:
                 raise RuntimeError("DPI output was not detected")
             self.connector_id = connector.connector_id
+            self.connector_name = 'DPI-%d' % connector.connector_type_id
             self.crtc_id, crtc_index = self._find_crtc(connector, resources)
 
             self._enable_atomic_capabilities()
@@ -126,6 +188,11 @@ class KMSDisplay:
             if connector != ffi.NULL:
                 drm.drmModeFreeConnector(connector)
             drm.drmModeFreeResources(resources)
+
+    def _device_description(self):
+        return 'FBMatrix: DRM card %s (%s), output %s (connector %d)' % (
+            os.path.basename(self.device), self.device,
+            self.connector_name, self.connector_id)
 
     @staticmethod
     def _create_mode(width, height, clock, vfp=0, vsync=0, vbp=0):

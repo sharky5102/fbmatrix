@@ -15,6 +15,7 @@ import fbo
 import signal
 import subprocess
 import tempfile
+from unittest import mock
 
 import common
 import displays.ws2811
@@ -234,6 +235,44 @@ class TestWS2811(unittest.TestCase):
 
 
 class TestKMSOutputModes(unittest.TestCase):
+    def testDrmDeviceDescription(self):
+        display = object.__new__(KMSDisplay)
+        display.device = '/dev/dri/card2'
+        display.connector_name = 'DPI-1'
+        display.connector_id = 49
+        self.assertEqual(
+            'FBMatrix: DRM card card2 (/dev/dri/card2), '
+            'output DPI-1 (connector 49)',
+            display._device_description())
+
+    @mock.patch('kms.glob.glob')
+    def testDrmCardsAreNaturallySorted(self, glob_cards):
+        glob_cards.return_value = [
+            '/dev/dri/card10', '/dev/dri/card2',
+            '/dev/dri/card0', '/dev/dri/card0-HDMI-A-1',
+        ]
+        self.assertEqual(
+            ['/dev/dri/card0', '/dev/dri/card2', '/dev/dri/card10'],
+            KMSDisplay._card_devices())
+
+    @mock.patch.object(KMSDisplay, '_device_has_dpi',
+                       side_effect=[False, True])
+    @mock.patch('kms.os.close')
+    @mock.patch('kms.os.open', side_effect=[10, 11])
+    @mock.patch.object(KMSDisplay, '_card_devices', return_value=[
+        '/dev/dri/card0', '/dev/dri/card1'])
+    def testSelectsCardContainingDpi(self, _cards, open_device, close_device,
+                                     has_dpi):
+        self.assertEqual(
+            ('/dev/dri/card1', 11), KMSDisplay._open_dpi_device())
+        self.assertEqual(
+            [mock.call('/dev/dri/card0', os.O_RDWR | os.O_CLOEXEC),
+             mock.call('/dev/dri/card1', os.O_RDWR | os.O_CLOEXEC)],
+            open_device.call_args_list)
+        close_device.assert_called_once_with(10)
+        self.assertEqual([mock.call(10), mock.call(11)],
+                         has_dpi.call_args_list)
+
     def testHub75UsesFixedOutputMode(self):
         self.assertEqual((4096, 194, 50000, 0, 0, 0),
                          fbmatrix.output_mode('hub75e'))
