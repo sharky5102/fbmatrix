@@ -350,6 +350,40 @@ class TestKMSOutputModes(unittest.TestCase):
 
 
 class TestLayout(unittest.TestCase):
+    def testActiveBoundsExcludeInactivePadding(self):
+        layout = [[
+            (-1, -0.5, 0, 0),
+            (1, 0.5, 0, 0),
+            (10, 10, 0, -1),
+        ]]
+        self.assertEqual((-1.0, 1.0, -0.5, 0.5),
+                         ledlayout.active_xy_bounds(layout))
+
+    def testPhysicalCoordinatesNormalizeToTextureCoordinates(self):
+        bounds = (-1.0, 1.0, -0.5, 0.5)
+        self.assertEqual((0.0, 0.0),
+                         ledlayout.normalized_xy(-1, 0.5, bounds))
+        self.assertEqual((1.0, 1.0),
+                         ledlayout.normalized_xy(1, -0.5, bounds))
+
+    def testLayoutSourceSizeUsesActiveAspect(self):
+        layout = [[
+            (-1.0, -0.8, 0, 0), (-0.9, -0.8, 0, 0),
+            (-0.8, -0.8, 0, 0), (1.0, 0.8, 0, -1),
+        ], [
+            (-1.0, 0.8, 0, 0), (-0.9, 0.8, 0, 0),
+            (-0.8, 0.8, 0, 0), (1.0, -0.8, 0, 0),
+        ]]
+        self.assertEqual((84, 68), common.layout_source_size(layout, 4))
+
+    def testTypicalActiveSpacingIgnoresInactiveBreaks(self):
+        layout = [[
+            (0, 0, 0, 0), (0.1, 0, 0, 0),
+            (20, 20, 0, -1),
+            (1, 1, 0, 0), (1.1, 1, 0, 0),
+        ]]
+        self.assertAlmostEqual(0.1, ledlayout.typical_active_spacing(layout))
+
     def testStringLayoutRejectsStringsOver2000Leds(self):
         with self.assertRaisesRegex(RuntimeError, 'string 0 contains 2001 LEDs'):
             ledlayout.require_xyzc_string_layout(

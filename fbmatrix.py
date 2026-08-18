@@ -215,6 +215,8 @@ class renderer(object):
             mag_filter=gl.GL_NEAREST,
             min_filter=gl.GL_LINEAR_MIPMAP_LINEAR,
         )
+        print('FBMatrix: source framebuffer %dx%d' % (
+            self.source_columns, self.source_rows), file=sys.stderr)
 
         if self.displaytype == 'ws2811':
             if self.layout is None:

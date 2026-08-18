@@ -59,9 +59,19 @@ def renderer_from_args(args, preserve_source_modes=False):
         raise RuntimeError('--source-columns must be greater than zero')
     if args.source_rows is not None and args.source_rows <= 0:
         raise RuntimeError('--source-rows must be greater than zero')
+    if (args.display == 'ws2811' and
+            (args.source_columns is not None or args.source_rows is not None)):
+        raise RuntimeError(
+            '--source-columns and --source-rows are not supported for ws2811; '
+            'use --source-scale')
 
-    source_columns = args.source_columns or max(1, int(args.columns * args.source_scale))
-    source_rows = args.source_rows or max(1, int(args.rows * args.source_scale))
+    if (layout is not None and args.source_columns is None and
+            args.source_rows is None):
+        source_columns, source_rows = layout_source_size(
+            layout, args.source_scale)
+    else:
+        source_columns = args.source_columns or max(1, int(args.columns * args.source_scale))
+        source_rows = args.source_rows or max(1, int(args.rows * args.source_scale))
 
     return fbmatrix.renderer(
         emulate=args.emulate,
@@ -78,3 +88,15 @@ def renderer_from_args(args, preserve_source_modes=False):
         extract=args.extract,
         layout=layout,
     )
+
+
+def layout_source_size(layout, scale):
+    """Size a source framebuffer to the physical aspect of active LEDs."""
+    min_x, max_x, min_y, max_y = ledlayout.active_xy_bounds(layout)
+    width = max_x - min_x
+    height = max_y - min_y
+    spacing = ledlayout.typical_active_spacing(layout)
+    native_columns = round(width / spacing) + 1 if width else 1
+    native_rows = round(height / spacing) + 1 if height else 1
+    return (max(1, round(native_columns * scale)),
+            max(1, round(native_rows * scale)))

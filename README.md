@@ -296,7 +296,13 @@ the browser UI is closed.
 
 `fbmserve.py` renders effects into a 4x source framebuffer by default before
 sampling them down to the LEDs. Use `--source-scale`, `--source-columns` or
-`--source-rows` to tune the source resolution.
+`--source-rows` to tune the source resolution. For WS2811 layouts, the default
+source framebuffer follows the physical aspect ratio of the active LED bounds.
+Those bounds are normalized to the complete source texture for sampling, while
+the original layout coordinates remain unchanged for geometry and emulation.
+Its native resolution is estimated from typical active-LED spacing, then
+multiplied by `--source-scale`. Exact `--source-columns` and `--source-rows`
+overrides are reserved for HUB75 and are rejected for WS2811.
 
 The browser UI is served from `web/`, and effects are loaded from `effects/`.
 

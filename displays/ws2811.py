@@ -78,8 +78,7 @@ class _bitgenerator(_quad):
             else if (mode == 3) color = vec3(0.0, 0.0, 1.0);
             else if (mode == 4) color = vec3(1.0);
             else {
-                highp vec2 position = lamp.xy * vec2(0.5) + vec2(0.5);
-                color = textureLod(tex, position, supersample).rgb;
+                color = textureLod(tex, lamp.xy, supersample).rgb;
             }
             color = pow(color, vec3(2.2));
             if (bit < 8)
@@ -165,10 +164,12 @@ class signalgenerator(_quad):
         self.mapheight = MAX_STRINGS
         data = np.zeros((self.mapheight, self.mapwidth, 4), dtype=np.float32)
         data[:, :, 3] = -1
+        bounds = ledlayout.active_xy_bounds(self.strings)
         for string_index, string in enumerate(self.strings):
             for led_index, lamp in enumerate(string):
+                u, v = ledlayout.normalized_xy(lamp[0], lamp[1], bounds)
                 data[string_index, led_index] = (
-                    lamp[0], -lamp[1], lamp[2], lamp[3])
+                    u, v, lamp[2], lamp[3])
         self.lamptex = gl.glGenTextures(1)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.lamptex)
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER,

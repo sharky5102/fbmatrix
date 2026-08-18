@@ -49,8 +49,7 @@ class tree(geometry.base):
             } else if (source_mode == 4) {
                 t = vec3(1.0, 1.0, 1.0);
             } else {
-                highp vec2 lamppos = lamp.xy * vec2(0.5,0.5) + vec2(.5,.5);
-                t = textureLod(tex, lamppos, supersample).rgb;
+                t = textureLod(tex, lamp.xy, supersample).rgb;
             }
 			
             if (v_id < time * 100.0) {
@@ -74,11 +73,11 @@ class tree(geometry.base):
         self.mapwidth = len(self.lamps)
 
         data = np.zeros(self.mapwidth, (np.float32, 4))
-        
+        bounds = ledlayout.active_xy_bounds(self.lamps)
         for i in range(0, len(self.lamps)):
             lamp = self.lamps[i]
-            data[i][0] = lamp[0];
-            data[i][1] = -lamp[1];
+            data[i][0], data[i][1] = ledlayout.normalized_xy(
+                lamp[0], lamp[1], bounds)
             data[i][2] = lamp[2];
             data[i][3] = lamp[3];
         
