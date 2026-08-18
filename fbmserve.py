@@ -11,10 +11,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
 import common
-import assembly.yuv
 import ndi
 import led_effect
-import shader_effect
+
+
+def get_shader_effect():
+    # shader_effect imports OpenGL, so load it only after command-line backend
+    # selection has configured PyOpenGL.
+    import shader_effect
+    return shader_effect
 
 
 class AppState:
@@ -140,7 +145,9 @@ class InputRenderer:
             self.close_receiver()
             try:
                 self.ndi_receiver = ndi.Receiver(self.ndi_runtime, source)
-                self.ndi_quad = self.ndi_quad or assembly.yuv.yuv422()
+                if self.ndi_quad is None:
+                    import assembly.yuv
+                    self.ndi_quad = assembly.yuv.yuv422()
                 self.current_ndi_source = source
                 self.next_ndi_status = 0.0
                 self.state.update(error=None, ndi_status={})
@@ -229,6 +236,7 @@ class InputRenderer:
         self.next_autoplay = now + snapshot['autoplay_interval']
 
     def load_effect(self, effect_id):
+        shader_effect = get_shader_effect()
         source = shader_effect.load_effect_source(self.effects_dir, effect_id)
         self.quad = shader_effect.ShaderEffect(source, self.width, self.height)
         self.current_effect = effect_id
@@ -257,7 +265,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == '/api/effects':
-            self.write_json(shader_effect.discover_effects(self.server.effects_dir))
+            self.write_json(get_shader_effect().discover_effects(
+                self.server.effects_dir))
             return
 
         if parsed.path == '/api/led-effects':
@@ -308,7 +317,8 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if 'effect' in payload:
             effect = str(payload['effect'])
-            available = {item['id'] for item in shader_effect.discover_effects(self.server.effects_dir)}
+            available = {item['id'] for item in get_shader_effect().discover_effects(
+                self.server.effects_dir)}
             if effect not in available:
                 raise ValueError('Unknown effect')
             values['effect'] = effect
@@ -347,7 +357,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not isinstance(payload['autoplay_effects'], list):
                 raise ValueError('Expected autoplay_effects list')
 
-            available = {item['id'] for item in shader_effect.discover_effects(self.server.effects_dir)}
+            available = {item['id'] for item in get_shader_effect().discover_effects(
+                self.server.effects_dir)}
             autoplay_effects = []
             for effect in payload['autoplay_effects']:
                 effect = str(effect)
@@ -394,7 +405,8 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         effect_id = parts[2]
         try:
-            source = shader_effect.load_effect_source(self.server.effects_dir, effect_id)
+            source = get_shader_effect().load_effect_source(
+                self.server.effects_dir, effect_id)
         except (ValueError, FileNotFoundError):
             self.send_error(404)
             return
@@ -480,11 +492,12 @@ def main():
     parser.add_argument('--autoplay', action='store_true', help='Randomly switch effects on the server')
     parser.add_argument('--autoplay-interval', type=float, default=30.0, help='Seconds between autoplay effect switches')
     args = parser.parse_args()
+    matrix = common.renderer_from_args(args)
 
     effects_dir = os.path.abspath(args.effects_dir)
     led_effects_dir = os.path.abspath(args.led_effects_dir)
     web_dir = os.path.abspath(args.web_dir)
-    effects = shader_effect.discover_effects(effects_dir)
+    effects = get_shader_effect().discover_effects(effects_dir)
     if not effects:
         raise RuntimeError('No effects found in %s' % effects_dir)
 
@@ -509,7 +522,7 @@ def main():
             ndi_runtime = ndi.Runtime()
             ndi_discovery = ndi.Discovery(ndi_runtime)
         except (ndi.NDIUnavailable, RuntimeError) as e:
-            ndi_error = str(e)
+            raise RuntimeError('Fatal: NDI initialization failed: %s' % e) from e
 
     server = create_server(args.host, args.port, web_dir, effects_dir, state, commands,
                            ndi_discovery, ndi_error, led_effects_dir)
@@ -517,7 +530,6 @@ def main():
     thread.start()
     print('fbmserve listening on http://%s:%d/' % (args.host, args.port))
 
-    matrix = common.renderer_from_args(args)
     renderer = InputRenderer(effects_dir, effects, matrix.source_columns, matrix.source_rows,
                              state, commands, ndi_runtime, matrix,
                              led_effects_dir)

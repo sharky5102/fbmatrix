@@ -1,7 +1,8 @@
 import json
+import sys
 from json import JSONDecodeError
 
-import fbmatrix
+from displaymode import output_mode, output_stats
 import ledlayout
 
 
@@ -74,6 +75,17 @@ def renderer_from_args(args, preserve_source_modes=False):
         source_columns = args.source_columns or max(1, int(args.columns * args.source_scale))
         source_rows = args.source_rows or max(1, int(args.rows * args.source_scale))
 
+    if args.emulate or args.preview or args.raw:
+        from glut import GLUTDisplay
+        backend = GLUTDisplay()
+    else:
+        from kms import KMSDisplay
+        mode = output_mode(display, layout)
+        print(output_stats(display, mode, layout), file=sys.stderr)
+        backend = KMSDisplay(*mode)
+
+    import fbmatrix
+
     return fbmatrix.renderer(
         emulate=args.emulate,
         preview=args.preview,
@@ -88,6 +100,7 @@ def renderer_from_args(args, preserve_source_modes=False):
         oe=args.oe,
         extract=args.extract,
         layout=layout,
+        backend=backend,
     )
 
 

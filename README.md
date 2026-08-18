@@ -201,12 +201,17 @@ If you keep the layout in JSON, load it in your application and pass it to
 the renderer explicitly:
 
     import json
-    import fbmatrix
+    from displaymode import output_mode
+    from kms import KMSDisplay
 
     with open('layout.json', 'rt') as f:
         layout = json.load(f)
 
-    matrix = fbmatrix.renderer(display='ws2811', layout=layout)
+    backend = KMSDisplay(*output_mode('ws2811', layout))
+
+    import fbmatrix
+    matrix = fbmatrix.renderer(
+        backend=backend, display='ws2811', layout=layout)
 
 If you have a perfect matrix (for example, you have a ws281x matrix on a
 PCB), then you can use the generate-layout.py script to generate a

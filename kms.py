@@ -1,6 +1,10 @@
 import glob
 import atexit
 import os
+
+# This must precede the first OpenGL import in the process.
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
+
 import select
 import sys
 import time
@@ -118,6 +122,8 @@ class _DRMDevice:
 
 class KMSDisplay:
     """Desktop OpenGL display backed by EGL, GBM, and atomic DRM/KMS."""
+
+    name = 'kms'
 
     def __init__(self, width, height, clock, vfp=0, vsync=0, vbp=0,
                  device=None):

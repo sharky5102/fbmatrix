@@ -1,7 +1,3 @@
-import os
-
-os.environ['PYOPENGL_PLATFORM'] = 'egl'
-
 import signal
 import sys
 import time
@@ -16,8 +12,7 @@ import displays.ws2811_ledbuffer
 import fbo
 import geometry.simple
 import ledlayout
-from headless import HeadlessDisplay
-from kms import KMSDisplay
+from displaymode import output_mode, output_stats
 
 
 def signal_handler(sig, frame):
@@ -29,44 +24,10 @@ global_display_backend = None
 global_backend = None
 
 
-def output_mode(displaytype, layout=None):
-    if displaytype == 'ws2811':
-        if layout is None:
-            raise RuntimeError('WS2811 display requires a layout argument')
-        strings = ledlayout.require_xyzc_string_layout(
-            layout,
-            displays.ws2811.MAX_LEDS_PER_STRING,
-            displays.ws2811.MAX_STRINGS)
-        height = max((len(string) for string in strings), default=0)
-        if height == 0:
-            raise RuntimeError('WS2811 layout must contain at least one LED')
-        return 840, height, 27000, 1, 1, 48
-    return 4096, 194, 50000, 0, 0, 0
-
-
-def output_stats(displaytype, mode, layout=None):
-    width, height, clock, vfp, vsync, vbp = mode
-    fps = clock * 1000 / (width * (height + vfp + vsync + vbp))
-    if displaytype == 'ws2811':
-        strings = ledlayout.require_xyzc_string_layout(
-            layout,
-            displays.ws2811.MAX_LEDS_PER_STRING,
-            displays.ws2811.MAX_STRINGS)
-        active = sum(
-            source_mode != -1
-            for string in strings
-            for _x, _y, _z, source_mode in string)
-        inactive = sum(len(string) for string in strings) - active
-        return (
-            'FBMatrix: %d strings, %d active LEDs, %d inactive LEDs, '
-            '%dx%d, %.2f FPS' %
-            (len(strings), active, inactive, width, height, fps))
-    return 'FBMatrix: HUB75, %dx%d, %.2f FPS' % (width, height, fps)
-
-
 class renderer(object):
     def __init__(
         self,
+        backend,
         emulate=False,
         preview=False,
         raw=False,
@@ -81,7 +42,6 @@ class renderer(object):
         oe='normal',
         extract='bcm',
         layout=None,
-        backend=None,
     ):
         self.emulate = emulate
         self.preview = preview
@@ -100,13 +60,9 @@ class renderer(object):
         self.starttime = time.time()
         self.fps_started = time.monotonic()
         self.fps_frames = 0
-        if backend is None:
-            backend = ('glut' if self.preview or self.emulate or self.raw
-                       else 'kms')
-        if backend not in ('kms', 'glut', 'headless'):
-            raise ValueError("backend must be 'kms', 'glut', or 'headless'")
-        self.backend = backend
-        self.use_window_manager = backend == 'glut'
+        self.backend = backend.name
+        self.backend_instance = backend
+        self.use_window_manager = self.backend == 'glut'
         self.display_backend = None
 
         self.init()
@@ -191,17 +147,10 @@ class renderer(object):
     def init(self):
         global global_init, global_display_backend, global_backend
 
-        kms_args = output_mode(self.displaytype, self.layout)
-
         if not global_init:
             if self.backend == 'glut':
                 self.init_glut()
-            elif self.backend == 'headless':
-                global_display_backend = HeadlessDisplay()
-            else:
-                print(output_stats(
-                    self.displaytype, kms_args, self.layout), file=sys.stderr)
-                global_display_backend = KMSDisplay(*kms_args)
+            global_display_backend = self.backend_instance
             global_backend = self.backend
             global_init = True
 
@@ -267,6 +216,11 @@ class renderer(object):
 
     def init_glut(self):
         glut.glutInit()
+        if (hasattr(glut, 'glutSetOption') and
+                hasattr(glut, 'GLUT_ACTION_ON_WINDOW_CLOSE')):
+            glut.glutSetOption(
+                glut.GLUT_ACTION_ON_WINDOW_CLOSE,
+                glut.GLUT_ACTION_GLUTMAINLOOP_RETURNS)
         glut.glutInitDisplayMode(
             glut.GLUT_DOUBLE | glut.GLUT_RGBA |
             glut.GLUT_DEPTH | glut.GLUT_ALPHA)
@@ -286,7 +240,11 @@ class renderer(object):
         signal.signal(signal.SIGINT, signal_handler)
 
         if self.use_window_manager:
-            glut.glutMainLoop()
+            if hasattr(glut, 'glutMainLoopEvent'):
+                while glut.glutGetWindow():
+                    glut.glutMainLoopEvent()
+            else:
+                glut.glutMainLoop()
         else:
             while True:
                 self.display()

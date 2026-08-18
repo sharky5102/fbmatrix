@@ -1,3 +1,8 @@
+import os
+
+# This must precede the first OpenGL import in the process.
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
+
 import OpenGL.GL as gl
 
 from ffi_backend import (
@@ -25,6 +30,7 @@ class HeadlessDisplay:
 
     width = 1
     height = 1
+    name = 'headless'
 
     def __init__(self):
         self.egl_display = egl.eglGetPlatformDisplay(

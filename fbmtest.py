@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-import fbmatrix
 import argparse
-import assembly.bytearray
 import common
 
 def render_contrast():
@@ -138,6 +136,7 @@ if args.channel not in channels:
 
 matrix = common.renderer_from_args(args, preserve_source_modes=args.type == 'layout-colors')
 
+import assembly.bytearray
 bytearray = assembly.bytearray.bytearray()
 
 matrix.run(patterns[args.type])

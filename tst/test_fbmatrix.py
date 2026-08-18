@@ -25,6 +25,7 @@ import assembly.tree
 import fbmatrix
 import led_effect
 import ledlayout
+from headless import HeadlessDisplay
 from kms import KMSDisplay, _DRMDevice
 from ffi_backend import (
     DRM_MODE_FLAG_PHSYNC,
@@ -35,6 +36,8 @@ from ffi_backend import (
 
 import unittest
 from OpenGL.GL.EXT.framebuffer_object import *
+
+headless_backend = HeadlessDisplay()
 
 def hub75_decompose(data):
     pixels = np.frombuffer(data, dtype=[('r', 'B'), ('g', 'B'), ('b', 'B'), ('a', 'B')])
@@ -115,7 +118,7 @@ class TestHub75(unittest.TestCase):
                 self.assertEqual(expected.rstrip(), actual)
         
     def testSimple16Scan(self):
-        self.renderer = fbmatrix.renderer(backend='headless')
+        self.renderer = fbmatrix.renderer(backend=headless_backend)
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: self.testPatternWhite()
@@ -126,7 +129,8 @@ class TestHub75(unittest.TestCase):
         self.assertFrameData('tst/data/hub75_32x32_white.txt', data)
 
     def testFieldFirstOrder(self):
-        self.renderer = fbmatrix.renderer(order='field-first', backend='headless')
+        self.renderer = fbmatrix.renderer(
+            order='field-first', backend=headless_backend)
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: self.testPatternWhite()
@@ -138,14 +142,14 @@ class TestHub75(unittest.TestCase):
 
     def testSourceFramebufferSize(self):
         self.renderer = fbmatrix.renderer(
-            source_columns=64, source_rows=48, backend='headless')
+            source_columns=64, source_rows=48, backend=headless_backend)
 
         self.assertEqual(64, self.renderer.mainfbo.width)
         self.assertEqual(48, self.renderer.mainfbo.height)
 
     def testSourceFramebufferUsesMipmaps(self):
         self.renderer = fbmatrix.renderer(
-            source_columns=64, source_rows=64, backend='headless')
+            source_columns=64, source_rows=64, backend=headless_backend)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.renderer.mainfbo.getTexture())
 
         self.assertEqual(
@@ -161,7 +165,7 @@ class TestWS2811(unittest.TestCase):
     def readFrameData(self, color, layout=None):
         self.renderer = fbmatrix.renderer(
             display='ws2811', layout=layout or self.layout,
-            backend='headless')
+            backend=headless_backend)
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: render_solid(color)
@@ -212,7 +216,7 @@ class TestWS2811(unittest.TestCase):
     def testEmulationAcceptsLayout(self):
         fbmatrix.renderer(
             display='ws2811', layout=self.layout, emulate=True,
-            backend='headless')
+            backend=headless_backend)
 
     def testEmitterBufferPreservesStringRowsAndLedColumns(self):
         layout = [
@@ -220,7 +224,7 @@ class TestWS2811(unittest.TestCase):
             [[0, 1, 0, 0]],
         ]
         renderer = fbmatrix.renderer(
-            display='ws2811', layout=layout, backend='headless')
+            display='ws2811', layout=layout, backend=headless_backend)
         self.assertEqual((2, 2),
                          (renderer.ledfbo.width, renderer.ledfbo.height))
 
@@ -251,7 +255,7 @@ class TestWS2811(unittest.TestCase):
         ]
         renderer = fbmatrix.renderer(
             display='ws2811', layout=layout,
-            backend='headless')
+            backend=headless_backend)
 
         with renderer.mainfbo:
             render_solid((0.25, 0.5, 0.75))
