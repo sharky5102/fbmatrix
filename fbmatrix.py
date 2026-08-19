@@ -215,7 +215,6 @@ class renderer(object):
                 raise RuntimeError('Emulation requires a layout argument')
             self.tree = assembly.tree.tree(
                 displays.ws2811.flatten_layout(self.layout),
-                supersample=self.supersample,
                 emitter_shape=(self.ledbuffer.width, self.ledbuffer.height),
                 string_lengths=[len(string)
                                 for string in self.ledbuffer.strings])

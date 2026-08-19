@@ -224,9 +224,12 @@ class TestWS2811(unittest.TestCase):
         self.assertTrue(first_pixel['B1'].startswith('1111111____________________________'))
 
     def testEmulationAcceptsLayout(self):
-        fbmatrix.renderer(
+        renderer = fbmatrix.renderer(
             display='ws2811', layout=self.layout, emulate=True,
             backend=test_backend)
+        self.assertEqual(
+            (500, 14),
+            (renderer.tree.tree.mapwidth, renderer.tree.tree.mapheight))
 
     def testEmitterBufferPreservesStringRowsAndLedColumns(self):
         layout = [
