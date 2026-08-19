@@ -1,9 +1,13 @@
 import sys
 import os
-os.environ['PYOPENGL_PLATFORM'] = 'egl'
-# Rendering tests do not exercise KMS scanout.  Force Mesa's software driver
-# so their GL limits and output are independent of the Raspberry Pi GPU model.
-os.environ['LIBGL_ALWAYS_SOFTWARE'] = 'true'
+IS_WINDOWS = sys.platform == 'win32'
+
+# Import the backend before OpenGL: each backend selects the appropriate
+# PyOpenGL platform before PyOpenGL performs its process-global initialization.
+if IS_WINDOWS:
+    from glut import GLUTDisplay
+else:
+    from headless import HeadlessDisplay
 
 import json
 import math
@@ -25,19 +29,25 @@ import assembly.tree
 import fbmatrix
 import led_effect
 import ledlayout
-from headless import HeadlessDisplay
-from kms import KMSDisplay, _DRMDevice
-from ffi_backend import (
-    DRM_MODE_FLAG_PHSYNC,
-    DRM_MODE_FLAG_PVSYNC,
-    DRM_MODE_TYPE_USERDEF,
-    ffi,
-)
+if IS_WINDOWS:
+    # Names used by decorators in the skipped Linux-only test class must still
+    # exist while unittest collects the module.
+    class KMSDisplay:
+        _device_has_dpi = None
+        _card_devices = None
+else:
+    from kms import KMSDisplay, _DRMDevice
+    from ffi_backend import (
+        DRM_MODE_FLAG_PHSYNC,
+        DRM_MODE_FLAG_PVSYNC,
+        DRM_MODE_TYPE_USERDEF,
+        ffi,
+    )
 
 import unittest
 from OpenGL.GL.EXT.framebuffer_object import *
 
-headless_backend = HeadlessDisplay()
+test_backend = GLUTDisplay() if IS_WINDOWS else HeadlessDisplay()
 
 def hub75_decompose(data):
     pixels = np.frombuffer(data, dtype=[('r', 'B'), ('g', 'B'), ('b', 'B'), ('a', 'B')])
@@ -118,7 +128,7 @@ class TestHub75(unittest.TestCase):
                 self.assertEqual(expected.rstrip(), actual)
         
     def testSimple16Scan(self):
-        self.renderer = fbmatrix.renderer(backend=headless_backend)
+        self.renderer = fbmatrix.renderer(backend=test_backend)
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: self.testPatternWhite()
@@ -130,7 +140,7 @@ class TestHub75(unittest.TestCase):
 
     def testFieldFirstOrder(self):
         self.renderer = fbmatrix.renderer(
-            order='field-first', backend=headless_backend)
+            order='field-first', backend=test_backend)
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: self.testPatternWhite()
@@ -142,14 +152,14 @@ class TestHub75(unittest.TestCase):
 
     def testSourceFramebufferSize(self):
         self.renderer = fbmatrix.renderer(
-            source_columns=64, source_rows=48, backend=headless_backend)
+            source_columns=64, source_rows=48, backend=test_backend)
 
         self.assertEqual(64, self.renderer.mainfbo.width)
         self.assertEqual(48, self.renderer.mainfbo.height)
 
     def testSourceFramebufferUsesMipmaps(self):
         self.renderer = fbmatrix.renderer(
-            source_columns=64, source_rows=64, backend=headless_backend)
+            source_columns=64, source_rows=64, backend=test_backend)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.renderer.mainfbo.getTexture())
 
         self.assertEqual(
@@ -165,7 +175,7 @@ class TestWS2811(unittest.TestCase):
     def readFrameData(self, color, layout=None):
         self.renderer = fbmatrix.renderer(
             display='ws2811', layout=layout or self.layout,
-            backend=headless_backend)
+            backend=test_backend)
         screen = fbo.FBO(self.width, self.height)
         with screen:
             self.renderer.render = lambda: render_solid(color)
@@ -216,7 +226,7 @@ class TestWS2811(unittest.TestCase):
     def testEmulationAcceptsLayout(self):
         fbmatrix.renderer(
             display='ws2811', layout=self.layout, emulate=True,
-            backend=headless_backend)
+            backend=test_backend)
 
     def testEmitterBufferPreservesStringRowsAndLedColumns(self):
         layout = [
@@ -224,7 +234,7 @@ class TestWS2811(unittest.TestCase):
             [[0, 1, 0, 0]],
         ]
         renderer = fbmatrix.renderer(
-            display='ws2811', layout=layout, backend=headless_backend)
+            display='ws2811', layout=layout, backend=test_backend)
         self.assertEqual((2, 2),
                          (renderer.ledfbo.width, renderer.ledfbo.height))
 
@@ -251,7 +261,7 @@ class TestWS2811(unittest.TestCase):
     def testEmitterBufferAppliesBrightnessToFramebufferInput(self):
         layout = [[[0, 0, 0, 0]]]
         renderer = fbmatrix.renderer(
-            display='ws2811', layout=layout, backend=headless_backend)
+            display='ws2811', layout=layout, backend=test_backend)
 
         with renderer.mainfbo:
             render_solid((0.8, 0.4, 0.2))
@@ -273,7 +283,7 @@ class TestWS2811(unittest.TestCase):
         ]
         renderer = fbmatrix.renderer(
             display='ws2811', layout=layout,
-            backend=headless_backend)
+            backend=test_backend)
 
         with renderer.mainfbo:
             render_solid((0.25, 0.5, 0.75))
@@ -307,6 +317,7 @@ class TestWS2811(unittest.TestCase):
         self.assertEqual((840, 200, 27000, 1, 1, 48),
                          fbmatrix.output_mode('ws2811', layout))
 
+    @unittest.skipIf(IS_WINDOWS, 'KMS is only available on Linux')
     def testManualKmsModeUsesOutputHeight(self):
         mode = KMSDisplay._create_mode(840, 200, 27000, 1, 1, 48)
         self.assertEqual((840, 840, 840, 840),
@@ -320,6 +331,7 @@ class TestWS2811(unittest.TestCase):
             DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC, mode.flags)
 
 
+@unittest.skipIf(IS_WINDOWS, 'KMS is only available on Linux')
 class TestKMSOutputModes(unittest.TestCase):
     @mock.patch('kms.os.close')
     @mock.patch('kms.egl')
