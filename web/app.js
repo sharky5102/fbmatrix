@@ -25,6 +25,8 @@ const preview = {
   error: null,
 };
 
+const SLIDER_UPDATE_DELAY = 100;
+
 const effectsEl = document.getElementById('effects');
 const ledEffectsEl = document.getElementById('led-effects');
 const hueEl = document.getElementById('hue');
@@ -243,6 +245,14 @@ async function updateState(values) {
   }
 }
 
+function debounce(callback, delay) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => callback(...args), delay);
+  };
+}
+
 function updateAutoplayEffect(effectId, checked) {
   const selected = new Set(state.autoplay_effects);
   if (checked) {
@@ -413,9 +423,28 @@ function setUniform2f(name, x, y) {
   preview.gl.uniform2f(loc, x, y);
 }
 
-hueEl.addEventListener('input', () => updateState({ hue: Number(hueEl.value) }));
-brightnessEl.addEventListener('input', () => updateState({ brightness: Number(brightnessEl.value) }));
-supersampleEl.addEventListener('input', () => updateState({ supersample: Number(supersampleEl.value) }));
+const updateHue = debounce((hue) => updateState({ hue }), SLIDER_UPDATE_DELAY);
+const updateBrightness = debounce(
+  (brightness) => updateState({ brightness }),
+  SLIDER_UPDATE_DELAY,
+);
+const updateSupersample = debounce(
+  (supersample) => updateState({ supersample }),
+  SLIDER_UPDATE_DELAY,
+);
+
+hueEl.addEventListener('input', () => {
+  state.hue = Number(hueEl.value);
+  updateHue(state.hue);
+});
+brightnessEl.addEventListener('input', () => {
+  state.brightness = Number(brightnessEl.value);
+  updateBrightness(state.brightness);
+});
+supersampleEl.addEventListener('input', () => {
+  state.supersample = Number(supersampleEl.value);
+  updateSupersample(state.supersample);
+});
 autoplayEl.addEventListener('change', () => updateState({ autoplay: autoplayEl.checked }));
 autoplayIntervalEl.addEventListener('change', () => updateState({
   autoplay_interval: Number(autoplayIntervalEl.value),
