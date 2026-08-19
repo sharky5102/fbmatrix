@@ -31,7 +31,6 @@ class ShaderEffect(geometry.base):
         self.height = height
         self.time = 0.0
         self.hue = 0.0
-        self.brightness = 1.0
         super(ShaderEffect, self).__init__()
 
     def getVertices(self):
@@ -47,15 +46,11 @@ class ShaderEffect(geometry.base):
         gl.glUniform2f(loc, self.width, self.height)
         loc = gl.glGetUniformLocation(self.program, "iHue")
         gl.glUniform1f(loc, self.hue)
-        loc = gl.glGetUniformLocation(self.program, "iBrightness")
-        gl.glUniform1f(loc, self.brightness)
-
         super(ShaderEffect, self).draw()
 
-    def set_params(self, now, hue, brightness):
+    def set_params(self, now, hue):
         self.time = now
         self.hue = hue
-        self.brightness = brightness
 
     @staticmethod
     def wrap_source(source):
@@ -69,7 +64,6 @@ class ShaderEffect(geometry.base):
             uniform highp float iTime;
             uniform highp vec2 iResolution;
             uniform highp float iHue;
-            uniform highp float iBrightness;
 
             """ + source + """
 
@@ -77,7 +71,7 @@ class ShaderEffect(geometry.base):
             {
                 highp vec4 color;
                 mainImage(color, v_texcoor * iResolution);
-                f_color = vec4(color.rgb * iBrightness, color.a);
+                f_color = color;
             } """
 
 

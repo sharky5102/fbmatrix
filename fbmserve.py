@@ -130,7 +130,7 @@ class InputRenderer:
             return
 
         now = time.monotonic() - self.started
-        self.quad.set_params(now, snapshot['hue'], snapshot['brightness'])
+        self.quad.set_params(now, snapshot['hue'])
         self.quad.render()
 
     def render_ndi(self, snapshot):

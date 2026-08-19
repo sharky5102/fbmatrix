@@ -64,7 +64,9 @@ class ledbuffer(geometry.base):
             highp vec4 ledColor;
             mainLed(ledColor, lamp.xyz, float(emitter.x), emitter.y,
                     sourceMode);
-            f_color = vec4(clamp(ledColor.rgb, 0.0, 1.0), ledColor.a);
+            f_color = vec4(
+                clamp(ledColor.rgb * iBrightness, 0.0, 1.0),
+                ledColor.a);
         } """
 
     attributes = {'position': 2, 'texcoor': 2}

@@ -27,10 +27,6 @@
           <h2>Framebuffer</h2>
           <nav class="effects" id="effects" aria-label="Effects"></nav>
         </div>
-        <div>
-          <h2>Emitter</h2>
-          <nav class="effects" id="led-effects" aria-label="Emitter effects"></nav>
-        </div>
       </aside>
 
       <section class="panel">
@@ -43,10 +39,6 @@
             <label>
               <span>Hue</span>
               <input id="hue" type="range" min="0" max="1" step="0.001" value="0">
-            </label>
-            <label>
-              <span>Brightness</span>
-              <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
             </label>
             <label class="check-row">
               <input id="autoplay" type="checkbox">
@@ -67,6 +59,17 @@
         <select id="ndi-source"></select>
         <small id="ndi-status" class="input-status" hidden></small>
         <strong id="ndi-error" class="input-error" hidden></strong>
+      </label>
+    </section>
+
+    <section class="output-controls" aria-label="Output controls">
+      <div>
+        <h2>Emitter shader</h2>
+        <nav class="effects" id="led-effects" aria-label="Emitter shaders"></nav>
+      </div>
+      <label>
+        <span>Brightness</span>
+        <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
       </label>
     </section>
   </main>

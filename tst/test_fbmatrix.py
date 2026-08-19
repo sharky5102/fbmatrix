@@ -248,6 +248,24 @@ class TestWS2811(unittest.TestCase):
         self.assertEqual((0, 255), tuple(pixels[1, 0, :2]))
         self.assertEqual((0, 0, 0), tuple(pixels[1, 1, :3]))
 
+    def testEmitterBufferAppliesBrightnessToFramebufferInput(self):
+        layout = [[[0, 0, 0, 0]]]
+        renderer = fbmatrix.renderer(
+            display='ws2811', layout=layout, backend=headless_backend)
+
+        with renderer.mainfbo:
+            render_solid((0.8, 0.4, 0.2))
+        renderer.ledbuffer.set_params(0.0, 0.0, 0.5)
+
+        with renderer.ledfbo:
+            renderer.clear()
+            renderer.ledbuffer.render()
+            data = gl.glReadPixels(
+                0, 0, 1, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+        pixel = np.frombuffer(data, dtype=np.uint8).reshape((1, 1, 4))[0, 0]
+        np.testing.assert_allclose(pixel[:3], (102, 51, 26), atol=1)
+
     def testEmitterEffectsCompileAndRenderForTwoDimensionalLayout(self):
         layout = [
             [[0, 0, 0, 0], [1, 0, 0, 0], [2, 0, 0, 0]],
