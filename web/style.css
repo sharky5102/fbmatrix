@@ -244,6 +244,11 @@ canvas {
   background: var(--surface);
 }
 
+.output-settings {
+  display: grid;
+  gap: 16px;
+}
+
 label {
   display: grid;
   gap: 10px;

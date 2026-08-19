@@ -5,6 +5,7 @@ const state = {
   led_effect: 'default',
   hue: 0,
   brightness: 1,
+  supersample: 3,
   autoplay: false,
   autoplay_interval: 30,
   autoplay_effects: [],
@@ -28,6 +29,7 @@ const effectsEl = document.getElementById('effects');
 const ledEffectsEl = document.getElementById('led-effects');
 const hueEl = document.getElementById('hue');
 const brightnessEl = document.getElementById('brightness');
+const supersampleEl = document.getElementById('supersample');
 const autoplayEl = document.getElementById('autoplay');
 const autoplayIntervalEl = document.getElementById('autoplay-interval');
 const statusEl = document.getElementById('status');
@@ -133,6 +135,7 @@ function renderControls() {
   const effectMode = state.input_mode === 'effect';
   hueEl.value = state.hue;
   brightnessEl.value = state.brightness;
+  supersampleEl.value = state.supersample;
   autoplayEl.checked = state.autoplay;
   modeEffectEl.classList.toggle('active', effectMode);
   modeEffectEl.setAttribute('aria-pressed', String(effectMode));
@@ -412,6 +415,7 @@ function setUniform2f(name, x, y) {
 
 hueEl.addEventListener('input', () => updateState({ hue: Number(hueEl.value) }));
 brightnessEl.addEventListener('input', () => updateState({ brightness: Number(brightnessEl.value) }));
+supersampleEl.addEventListener('input', () => updateState({ supersample: Number(supersampleEl.value) }));
 autoplayEl.addEventListener('change', () => updateState({ autoplay: autoplayEl.checked }));
 autoplayIntervalEl.addEventListener('change', () => updateState({
   autoplay_interval: Number(autoplayIntervalEl.value),

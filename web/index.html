@@ -67,10 +67,16 @@
         <h2>Emitter shader</h2>
         <nav class="effects" id="led-effects" aria-label="Emitter shaders"></nav>
       </div>
-      <label>
-        <span>Brightness</span>
-        <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
-      </label>
+      <div class="output-settings">
+        <label>
+          <span>Brightness</span>
+          <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
+        </label>
+        <label>
+          <span>Supersample</span>
+          <input id="supersample" type="range" min="0" max="16" step="0.1" value="3">
+        </label>
+      </div>
     </section>
   </main>
 

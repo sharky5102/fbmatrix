@@ -35,6 +35,7 @@ class AppState:
         ndi_source=None,
         ndi_status=None,
         led_effect_id='default',
+        supersample=3.0,
     ):
         self.lock = threading.Lock()
         self.effect = effect
@@ -47,6 +48,7 @@ class AppState:
         self.ndi_source = ndi_source
         self.ndi_status = ndi_status or {}
         self.led_effect = led_effect_id
+        self.supersample = supersample
         self.error = None
 
     def snapshot(self):
@@ -62,6 +64,7 @@ class AppState:
                 'ndi_source': self.ndi_source,
                 'ndi_status': dict(self.ndi_status),
                 'led_effect': self.led_effect,
+                'supersample': self.supersample,
                 'error': self.error,
             }
 
@@ -100,6 +103,9 @@ class InputRenderer:
         self.apply_commands()
         self.apply_autoplay()
         snapshot = self.state.snapshot()
+
+        if self.matrix is not None:
+            self.matrix.set_supersample(snapshot['supersample'])
 
         if (self.has_ledbuffer() and
                 snapshot['led_effect'] != self.current_led_effect and
@@ -347,6 +353,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         if 'brightness' in payload:
             values['brightness'] = clamp(float(payload['brightness']), 0.0, 1.0)
 
+        if 'supersample' in payload:
+            values['supersample'] = clamp(float(payload['supersample']), 0.0, 16.0)
+
         if 'autoplay' in payload:
             values['autoplay'] = parse_bool(payload['autoplay'])
 
@@ -511,6 +520,7 @@ def main():
         args.autoplay,
         clamp(args.autoplay_interval, 1.0, 3600.0),
         [item['id'] for item in effects],
+        supersample=clamp(args.supersample, 0.0, 16.0),
     )
     commands = queue.Queue()
 

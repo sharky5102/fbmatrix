@@ -29,6 +29,11 @@ def test_state_preserves_selected_ndi_source():
     assert state.snapshot()['ndi_source'] == 'PC (OBS)'
 
 
+def test_state_preserves_supersample():
+    state = fbmserve.AppState('solid', supersample=4.5)
+    assert state.snapshot()['supersample'] == 4.5
+
+
 def test_renderer_reports_optional_runtime_missing():
     state = fbmserve.AppState('solid', input_mode='ndi', ndi_source='PC (OBS)')
     renderer = fbmserve.InputRenderer('', [], 16, 16, state, queue.Queue())

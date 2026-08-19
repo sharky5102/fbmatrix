@@ -73,6 +73,13 @@ class renderer(object):
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
 
+    def set_supersample(self, supersample):
+        self.supersample = supersample
+        if self.displaytype == 'ws2811':
+            self.ledbuffer.supersample = supersample
+        elif self.displaytype == 'hub75e':
+            self.signalgenerator.supersample = supersample
+
     def display(self):
         with self.mainfbo:
             self.clear()
