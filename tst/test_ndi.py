@@ -1,3 +1,5 @@
+import dataclasses
+import json
 import queue
 from unittest import mock
 
@@ -32,6 +34,70 @@ def test_state_preserves_selected_ndi_source():
 def test_state_preserves_supersample():
     state = fbmserve.AppState('solid', supersample=4.5)
     assert state.snapshot()['supersample'] == 4.5
+
+
+def test_state_file_persists_user_settings(tmp_path):
+    filename = tmp_path / 'state.json'
+    state = fbmserve.AppState('solid', state_file=filename)
+    state.update(input_mode='ndi', ndi_source='PC (OBS)', brightness=0.4)
+
+    saved = fbmserve.load_state_file(filename, {'solid'}, {'default'})
+    assert saved['input_mode'] == 'ndi'
+    assert saved['ndi_source'] == 'PC (OBS)'
+    assert saved['brightness'] == 0.4
+    assert 'error' not in json.loads(filename.read_text())
+    assert 'ndi_status' not in json.loads(filename.read_text())
+
+
+def test_app_state_round_trips_every_persisted_field(tmp_path):
+    first_filename = tmp_path / 'first.json'
+    first = fbmserve.AppState(
+        'plasma', hue=0.25, brightness=0.4, autoplay=True,
+        autoplay_interval=17.5, autoplay_effects=['solid', 'plasma'],
+        input_mode='ndi', ndi_source='Studio (Camera)',
+        led_effect='sparkle', supersample=6.5, state_file=first_filename)
+    first.update(error='temporary', ndi_status={'frames': 12})
+
+    saved = fbmserve.load_state_file(
+        first_filename, {'solid', 'plasma'}, {'default', 'sparkle'})
+    second_filename = tmp_path / 'second.json'
+    second = fbmserve.AppState(**saved, state_file=second_filename)
+
+    assert json.loads(second_filename.read_text()) == json.loads(
+        first_filename.read_text())
+    assert {key: second.snapshot()[key] for key in second.persisted_keys()} == saved
+    assert second.snapshot()['error'] is None
+    assert second.snapshot()['ndi_status'] == {}
+
+
+def test_every_app_state_field_has_a_serialization_policy(tmp_path):
+    transient = {
+        item.name for item in dataclasses.fields(fbmserve.AppState)
+        if not item.metadata.get('persist', True)
+    }
+    assert transient == {'error', 'ndi_status', 'state_file', 'lock'}
+
+    filename = tmp_path / 'state.json'
+    state = fbmserve.AppState('solid', state_file=filename)
+    assert set(json.loads(filename.read_text())) == set(state.persisted_keys())
+
+
+def test_corrupt_state_file_is_ignored(tmp_path):
+    filename = tmp_path / 'state.json'
+    filename.write_text('{not json')
+    assert fbmserve.load_state_file(filename, {'solid'}, {'default'}) is None
+
+
+def test_unavailable_saved_ndi_source_is_retried():
+    runtime = mock.Mock()
+    state = fbmserve.AppState('solid', input_mode='ndi', ndi_source='Offline')
+    renderer = fbmserve.InputRenderer('', [], 16, 16, state, queue.Queue(), runtime)
+
+    with mock.patch.object(fbmserve.ndi, 'Receiver', side_effect=RuntimeError('offline')) as receiver:
+        renderer.render()
+        renderer.render()
+
+    assert receiver.call_count == 2
 
 
 def test_renderer_reports_optional_runtime_missing():

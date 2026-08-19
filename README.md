@@ -299,6 +299,14 @@ Add `--autoplay --autoplay-interval 20` to switch randomly between effects
 every 20 seconds. Autoplay is handled server-side, so it continues even when
 the browser UI is closed.
 
+Pass `--state-file /path/to/fbmserve-state.json` to preserve user-controlled
+settings across restarts, including the selected NDI source and input mode.
+Persistence is disabled when this option is omitted. State is replaced
+atomically after changes; an unreadable, corrupt, or obsolete state file is
+ignored and replaced with the command-line defaults. A saved NDI source does
+not need to be visible during startup: the receiver keeps trying that source
+so it can connect when the source comes online.
+
 `fbmserve.py` renders effects into a 4x source framebuffer by default before
 sampling them down to the LEDs. Use `--source-scale`, `--source-columns` or
 `--source-rows` to tune the source resolution. For WS2811 layouts, the default

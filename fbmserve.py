@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 import argparse
+import dataclasses
 import json
 import mimetypes
 import os
 import queue
 import random
+import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,7 +25,27 @@ def get_shader_effect():
     return shader_effect
 
 
+@dataclasses.dataclass(init=False)
 class AppState:
+    # Fields are durable by default. Runtime-only fields must opt out, making a
+    # newly added setting automatically participate in serialization.
+    effect: str
+    hue: float
+    brightness: float
+    autoplay: bool
+    autoplay_interval: float
+    autoplay_effects: list
+    input_mode: str
+    ndi_source: str | None
+    led_effect: str
+    supersample: float
+    ndi_status: dict = dataclasses.field(metadata={'persist': False})
+    error: str | None = dataclasses.field(metadata={'persist': False})
+    state_file: object = dataclasses.field(
+        metadata={'persist': False, 'snapshot': False})
+    lock: object = dataclasses.field(
+        metadata={'persist': False, 'snapshot': False})
+
     def __init__(
         self,
         effect,
@@ -36,6 +59,8 @@ class AppState:
         ndi_status=None,
         led_effect_id='default',
         supersample=3.0,
+        state_file=None,
+        led_effect=None,
     ):
         self.lock = threading.Lock()
         self.effect = effect
@@ -47,31 +72,73 @@ class AppState:
         self.input_mode = input_mode
         self.ndi_source = ndi_source
         self.ndi_status = ndi_status or {}
-        self.led_effect = led_effect_id
+        self.led_effect = led_effect_id if led_effect is None else led_effect
         self.supersample = supersample
         self.error = None
+        self.state_file = state_file
+        if self.state_file is not None:
+            self._persist()
 
     def snapshot(self):
         with self.lock:
             return {
-                'effect': self.effect,
-                'hue': self.hue,
-                'brightness': self.brightness,
-                'autoplay': self.autoplay,
-                'autoplay_interval': self.autoplay_interval,
-                'autoplay_effects': list(self.autoplay_effects),
-                'input_mode': self.input_mode,
-                'ndi_source': self.ndi_source,
-                'ndi_status': dict(self.ndi_status),
-                'led_effect': self.led_effect,
-                'supersample': self.supersample,
-                'error': self.error,
+                item.name: self._copy_collection(getattr(self, item.name))
+                for item in dataclasses.fields(self)
+                if item.metadata.get('snapshot', True)
             }
+
+    @classmethod
+    def persisted_keys(cls):
+        return tuple(item.name for item in dataclasses.fields(cls)
+                     if item.metadata.get('persist', True))
+
+    @staticmethod
+    def _copy_collection(value):
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, dict):
+            return dict(value)
+        return value
 
     def update(self, **values):
         with self.lock:
+            persist = self.state_file is not None and any(
+                key in self.persisted_keys() and getattr(self, key) != value
+                for key, value in values.items())
             for key, value in values.items():
                 setattr(self, key, value)
+            if persist:
+                self._persist_locked()
+
+    def _persist(self):
+        with self.lock:
+            self._persist_locked()
+
+    def _persist_locked(self):
+        payload = {
+            key: self._copy_collection(getattr(self, key))
+            for key in self.persisted_keys()
+        }
+        directory = os.path.dirname(os.path.abspath(self.state_file))
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                    mode='w', encoding='utf-8', dir=directory,
+                    prefix='.fbmstate-', delete=False) as f:
+                temporary = f.name
+                json.dump(payload, f, indent=2, sort_keys=True)
+                f.write('\n')
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, self.state_file)
+        except OSError as e:
+            print('Unable to save state to %s: %s' %
+                  (self.state_file, e), file=sys.stderr)
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
 
 class InputRenderer:
@@ -472,6 +539,47 @@ def parse_bool(value):
     raise ValueError('Expected boolean value')
 
 
+def load_state_file(filename, effect_ids, led_effect_ids):
+    """Load and validate durable state, returning None for any bad snapshot."""
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            values = json.load(f)
+        if not isinstance(values, dict):
+            raise ValueError('expected an object')
+        if set(values) != set(AppState.persisted_keys()):
+            raise ValueError('unexpected or missing fields')
+        if values['effect'] not in effect_ids:
+            raise ValueError('unknown effect')
+        if values['led_effect'] not in led_effect_ids:
+            raise ValueError('unknown LED effect')
+        if values['input_mode'] not in ('effect', 'ndi'):
+            raise ValueError('unknown input mode')
+        if values['ndi_source'] is not None and not isinstance(values['ndi_source'], str):
+            raise ValueError('invalid NDI source')
+        if not isinstance(values['autoplay_effects'], list) or any(
+                not isinstance(item, str) or item not in effect_ids
+                for item in values['autoplay_effects']):
+            raise ValueError('invalid autoplay effects')
+        if not isinstance(values['autoplay'], bool):
+            raise ValueError('invalid autoplay value')
+        for key, low, high in (
+            ('hue', 0.0, 1.0), ('brightness', 0.0, 1.0),
+            ('autoplay_interval', 1.0, 3600.0), ('supersample', 0.0, 16.0),
+        ):
+            value = values[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError('invalid %s' % key)
+            if not low <= value <= high:
+                raise ValueError('%s out of range' % key)
+        return values
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print('Ignoring invalid state file %s: %s' % (filename, e),
+              file=sys.stderr)
+        return None
+
+
 def create_server(host, port, web_dir, effects_dir, state, commands,
                   ndi_discovery=None, ndi_error=None,
                   led_effects_dir='led_effects'):
@@ -500,6 +608,8 @@ def main():
     parser.add_argument('--brightness', type=float, default=1.0, help='Initial brightness from 0.0 to 1.0')
     parser.add_argument('--autoplay', action='store_true', help='Randomly switch effects on the server')
     parser.add_argument('--autoplay-interval', type=float, default=30.0, help='Seconds between autoplay effect switches')
+    parser.add_argument('--state-file', default=None,
+                        help='Persist server state to this JSON file')
     args = parser.parse_args()
     matrix = common.renderer_from_args(args)
 
@@ -513,15 +623,26 @@ def main():
     effect = args.effect or effects[0]['id']
     if effect not in {item['id'] for item in effects}:
         raise RuntimeError('Unknown effect: %s' % effect)
-    state = AppState(
-        effect,
-        clamp(args.hue, 0.0, 1.0),
-        clamp(args.brightness, 0.0, 1.0),
-        args.autoplay,
-        clamp(args.autoplay_interval, 1.0, 3600.0),
-        [item['id'] for item in effects],
-        supersample=clamp(args.supersample, 0.0, 16.0),
-    )
+    initial_state = {
+        'effect': effect,
+        'hue': clamp(args.hue, 0.0, 1.0),
+        'brightness': clamp(args.brightness, 0.0, 1.0),
+        'autoplay': args.autoplay,
+        'autoplay_interval': clamp(args.autoplay_interval, 1.0, 3600.0),
+        'autoplay_effects': [item['id'] for item in effects],
+        'input_mode': 'effect',
+        'ndi_source': None,
+        'led_effect': 'default',
+        'supersample': clamp(args.supersample, 0.0, 16.0),
+    }
+    if args.state_file is not None:
+        saved = load_state_file(
+            args.state_file,
+            {item['id'] for item in effects},
+            {item['id'] for item in led_effect.discover_effects(led_effects_dir)})
+        if saved is not None:
+            initial_state.update(saved)
+    state = AppState(**initial_state, state_file=args.state_file)
     commands = queue.Queue()
 
     ndi_runtime = None
