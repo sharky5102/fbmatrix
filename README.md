@@ -26,8 +26,7 @@ Right now, FBMatrix:
 
 [HUB75 demo on Adafruit 32x32 RGB matrix using Adafruit RGB matrix bonnet](https://www.youtube.com/watch?v=COhlBRFsR_o)
 
-### Quick setup for HUB75 RGB matrices
-**Assuming 1/16 scan RGB matrix**
+### Setup
 
 This assumes a current Raspberry Pi OS installation with networking and SSH
 configured. A text console is recommended because FBMatrix needs DRM master;
@@ -50,15 +49,26 @@ stop the display manager first if one is running.
 
    This selects the full KMS driver. Do not use `vc4-fkms-v3d` or another FKMS
    overlay: FBMatrix requires atomic KMS modesetting. This is the only boot
-   configuration FBMatrix requires. It creates the output mode itself at
-   startup, so no framebuffer dimensions, DPI group/mode, or `dpi_timings`
-   setting is needed.
+   configuration required in `config.txt`. FBMatrix creates the output mode
+   itself at startup, so no framebuffer dimensions, DPI group/mode, or
+   `dpi_timings` setting is needed.
 
-3. Power off the pi, and attach the RGB bonnet and RGB display to the bonnet. Make sure the RGB matrix also has power.
+3. Edit `/boot/firmware/cmdline.txt`. Remove the `splash` option, then add the
+   following options to the existing line:
 
-4. Boot the pi. Once it has booted, ssh to it and run:
+   ```text
+   video=HDMI-A-1:D fbcon=map:1
+   ```
+
+   Keep all options in `cmdline.txt` on a single line. Force-enabling HDMI and
+   mapping the framebuffer console to framebuffer 1 prevents kernel console
+   output from being sent through the DPI output.
+
+4. Reboot the Pi, reconnect over SSH, and install FBMatrix:
 
    ```bash
+   sudo reboot
+   # Reconnect over SSH after the Pi has rebooted.
    sudo apt install python3-venv
    git clone https://github.com/sharky5102/fbmatrix.git
    cd fbmatrix
@@ -68,29 +78,46 @@ stop the display manager first if one is running.
    python -m pip install -r requirements.txt
    ```
 
-   For HUB75 displays, you can now play a video:
-   ```
+Activate the environment again in each new shell before running FBMatrix:
+
+```bash
+cd fbmatrix
+source .venv/bin/activate
+```
+
+#### HUB75 setup
+
+These instructions assume a 1/16 scan RGB matrix.
+
+1. Power off the Pi and attach the RGB bonnet and RGB matrix to it. Make sure
+   the matrix also has power.
+2. Boot the Pi, connect over SSH, activate the virtual environment, and play a
+   video:
+
+   ```bash
+   cd fbmatrix
+   source .venv/bin/activate
    ./fbmplay some_video.mp4
    ```
 
-   or, on ws2811, first generate a layout:
-   ```
+#### WS2811 setup
+
+1. With the Pi powered off, connect the WS2811 strings. See
+   [Using WS281x output](#using-ws281x-output) for wiring information.
+2. Boot the Pi, connect over SSH, and activate the virtual environment.
+3. Generate a layout describing the LED positions. For example:
+
+   ```bash
+   cd fbmatrix
+   source .venv/bin/activate
    ./generate-layout --rows 20 --columns 100 > layout.json
    ```
 
-   and then play a video:
-
-   ```
-   ./fbmplay some_video.mp4 --display ws2811
-   ```
-
-   Activate the environment again in each new shell before running FBMatrix:
+4. Play a video using the WS2811 output:
 
    ```bash
-   source .venv/bin/activate
+   ./fbmplay some_video.mp4 --display ws2811
    ```
-
-Presto! You should see a beautiful rendering of your video on your RGB matrix, with sound playing from the audio jack.
 
 ### Technical overview
 FBMatrix works quite differently than other RGB driver libraries like the excellent rgbmatrix library. Instead of the CPU driving the GPIO pins in the correct order at the correct time, FBMatrix utilizes the DPI output driver of the video card on the Raspberry Pi4. 
