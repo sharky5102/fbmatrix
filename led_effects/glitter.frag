@@ -7,10 +7,11 @@ float hash11(float p)
 }
 
 void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex,
-             in int stringIndex, in int sourceMode)
+             in float stringIndex, in float enabled, in float lineIndex,
+             in float linePosition)
 {
-    vec4 source = defaultSource(ledPosition, sourceMode);
-    float emitter = ledIndex + float(stringIndex) * 4099.0;
+    vec4 source = sampleSource(ledPosition);
+    float emitter = ledIndex + stringIndex * 4099.0;
     float tick = floor(iTime * 18.0);
     float seed = hash11(emitter * 17.17);
     float lit = step(0.91, hash11(emitter * 41.41 + tick * 7.13));

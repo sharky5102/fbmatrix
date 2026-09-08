@@ -2,30 +2,28 @@ import math
 import statistics
 
 
-def require_xyzc_layout(layout):
+def require_led_layout(layout):
     if not layout:
         raise RuntimeError('Layout must contain at least one LED')
 
     normalized = []
 
     for i, lamp in enumerate(layout):
-        if len(lamp) != 4:
-            raise RuntimeError('Layout entry %d must be [x, y, z, c]' % i)
+        if len(lamp) != 6:
+            raise RuntimeError(
+                'Layout entry %d must be '
+                '[x, y, z, enabled, line, line_position]' % i)
+        x, y, z, enabled, line, line_position = lamp
 
-        x, y, z, c = lamp
-
-        if isinstance(c, bool) or int(c) != c:
-            raise RuntimeError('Layout entry %d source mode must be an integer' % i)
-
-        if int(c) < -1 or int(c) > 4:
-            raise RuntimeError('Layout entry %d source mode must be -1, 0, 1, 2, 3 or 4' % i)
-
-        normalized.append((float(x), float(y), float(z), int(c)))
+        values = (x, y, z, enabled, line, line_position)
+        if not all(math.isfinite(float(value)) for value in values):
+            raise RuntimeError('Layout entry %d values must be finite numbers' % i)
+        normalized.append(tuple(float(value) for value in values))
 
     return normalized
 
 
-def require_xyzc_string_layout(layout, max_string_length=2000, max_strings=14):
+def require_led_string_layout(layout, max_string_length=2000, max_strings=14):
     if not layout:
         raise RuntimeError('Layout must contain at least one string')
     if len(layout) > max_strings:
@@ -40,7 +38,7 @@ def require_xyzc_string_layout(layout, max_string_length=2000, max_strings=14):
                 'Layout string %d contains %d LEDs; at most %d are supported' %
                 (string_index, len(string), max_string_length))
         try:
-            normalized.append(require_xyzc_layout(string) if string else [])
+            normalized.append(require_led_layout(string) if string else [])
         except (TypeError, ValueError, RuntimeError) as e:
             raise RuntimeError('Layout string %d: %s' % (string_index, e)) from e
 
@@ -53,12 +51,11 @@ def flatten_string_layout(layout):
 
 def active_xy_bounds(layout):
     """Return physical XY bounds for LEDs which can display source content."""
-    if (layout and len(layout[0]) == 4 and
-            not isinstance(layout[0][0], (list, tuple))):
-        lamps = require_xyzc_layout(layout)
+    if (layout and not isinstance(layout[0][0], (list, tuple))):
+        lamps = require_led_layout(layout)
     else:
-        lamps = flatten_string_layout(require_xyzc_string_layout(layout))
-    active = [lamp for lamp in lamps if lamp[3] != -1]
+        lamps = flatten_string_layout(require_led_string_layout(layout))
+    active = [lamp for lamp in lamps if lamp[3] > 0.0]
     points = active or lamps
     return (
         min(lamp[0] for lamp in points),
@@ -81,13 +78,13 @@ def normalized_xy(x, y, bounds):
 
 def typical_active_spacing(layout):
     """Estimate XY spacing from consecutive active LEDs in each string."""
-    strings = require_xyzc_string_layout(layout)
+    strings = require_led_string_layout(layout)
     distances = []
     active_count = 0
     for string in strings:
         previous = None
         for lamp in string:
-            if lamp[3] == -1:
+            if lamp[3] <= 0.0:
                 previous = None
                 continue
             active_count += 1

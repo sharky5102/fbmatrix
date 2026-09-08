@@ -170,7 +170,7 @@ class TestHub75(unittest.TestCase):
 class TestWS2811(unittest.TestCase):
     height = 500
     width = 840
-    layout = [[[0.0, 0.0, 0.0, 0]] * 500 for _ in range(14)]
+    layout = [[[0.0, 0.0, 0.0, 1, 0, 0]] * 500 for _ in range(14)]
 
     def readFrameData(self, color, layout=None):
         self.renderer = fbmatrix.renderer(
@@ -198,23 +198,11 @@ class TestWS2811(unittest.TestCase):
         data = self.readFrameData((1, 0, 0))
         self.assertFrameData('tst/data/ws2811_red.txt', data)
 
-    def testMultipleUniverses(self):
+    def testInactiveLedRendersBlack(self):
         layout = [string.copy() for string in self.layout]
-        layout[0][0] = [0.0, 0.0, 0.0, 1] # red override
-        layout[1][0] = [0.0, 0.0, 0.0, 2] # green override
-        layout[2][0] = [0.0, 0.0, 0.0, 3] # blue override
-        layout[0][1] = [0.0, 0.0, 0.0, 2] # green override
-        layout[1][1] = [0.0, 0.0, 0.0, 3] # blue override
-        layout[2][1] = [0.0, 0.0, 0.0, 1] # red override
-
-        data = self.readFrameData((1, 1, 0), layout=layout)
-        self.assertFrameData('tst/data/ws2811_multiple_universes.txt', data)
-
-    def testInactiveSourceModeRendersBlack(self):
-        layout = [string.copy() for string in self.layout]
-        layout[0][0] = [0.0, 0.0, 0.0, -1]
-        layout[1][0] = [0.0, 0.0, 0.0, -1]
-        layout[2][0] = [0.0, 0.0, 0.0, -1]
+        layout[0][0] = [0.0, 0.0, 0.0, 0, 0, 0]
+        layout[1][0] = [0.0, 0.0, 0.0, 0, 0, 0]
+        layout[2][0] = [0.0, 0.0, 0.0, 0, 0, 0]
 
         data = self.readFrameData((1, 1, 1), layout=layout)
         first_pixel = next(parseFrameData(data, self.width))
@@ -233,8 +221,8 @@ class TestWS2811(unittest.TestCase):
 
     def testEmitterBufferPreservesStringRowsAndLedColumns(self):
         layout = [
-            [[0, 0, 0, 0], [1, 0, 0, 0]],
-            [[0, 1, 0, 0]],
+            [[0, 0, 0, 1, 0, 0], [1, 0, 0, 1, 0, 1]],
+            [[0, 1, 0, 1, 1, 0]],
         ]
         renderer = fbmatrix.renderer(
             display='ws2811', layout=layout, backend=test_backend)
@@ -243,9 +231,10 @@ class TestWS2811(unittest.TestCase):
 
         renderer.ledbuffer.set_effect_source("""
             void mainLed(out vec4 ledColor, in vec3 ledPosition,
-                         in float ledIndex, in int stringIndex,
-                         in int sourceMode) {
-                ledColor = vec4(ledIndex, float(stringIndex), 0.0, 1.0);
+                         in float ledIndex, in float stringIndex,
+                         in float enabled, in float lineIndex,
+                         in float linePosition) {
+                ledColor = vec4(linePosition, lineIndex, stringIndex, 1.0);
             }
         """)
         screen = fbo.FBO(self.width, 2)
@@ -256,13 +245,13 @@ class TestWS2811(unittest.TestCase):
             data = gl.glReadPixels(
                 0, 0, 2, 2, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
         pixels = np.frombuffer(data, dtype=np.uint8).reshape((2, 2, 4))
-        self.assertEqual((0, 0), tuple(pixels[0, 0, :2]))
-        self.assertEqual((255, 0), tuple(pixels[0, 1, :2]))
-        self.assertEqual((0, 255), tuple(pixels[1, 0, :2]))
+        self.assertEqual((0, 0, 0), tuple(pixels[0, 0, :3]))
+        self.assertEqual((255, 0, 0), tuple(pixels[0, 1, :3]))
+        self.assertEqual((0, 255, 255), tuple(pixels[1, 0, :3]))
         self.assertEqual((0, 0, 0), tuple(pixels[1, 1, :3]))
 
     def testEmitterBufferAppliesBrightnessToFramebufferInput(self):
-        layout = [[[0, 0, 0, 0]]]
+        layout = [[[0, 0, 0, 1, 0, 0]]]
         renderer = fbmatrix.renderer(
             display='ws2811', layout=layout, backend=test_backend)
 
@@ -281,8 +270,9 @@ class TestWS2811(unittest.TestCase):
 
     def testEmitterEffectsCompileAndRenderForTwoDimensionalLayout(self):
         layout = [
-            [[0, 0, 0, 0], [1, 0, 0, 0], [2, 0, 0, 0]],
-            [[0, 1, 0, 0], [1, 1, 0, 0]],
+            [[0, 0, 0, 1, 0, 0], [1, 0, 0, 1, 0, 0.5],
+             [2, 0, 0, 1, 0, 1]],
+            [[0, 1, 0, 1, 1, 0], [1, 1, 0, 1, 1, 1]],
         ]
         renderer = fbmatrix.renderer(
             display='ws2811', layout=layout,
@@ -313,9 +303,9 @@ class TestWS2811(unittest.TestCase):
 
     def testOutputHeightUsesLongestString(self):
         layout = [
-            [[0, 0, 0, 0]] * 73,
-            [[0, 0, 0, 0]] * 200,
-            [[0, 0, 0, 0]] * 12,
+            [[0, 0, 0, 1, 0, 0]] * 73,
+            [[0, 0, 0, 1, 0, 0]] * 200,
+            [[0, 0, 0, 1, 0, 0]] * 12,
         ]
         self.assertEqual((840, 200, 27000, 1, 1, 48),
                          fbmatrix.output_mode('ws2811', layout))
@@ -432,9 +422,9 @@ class TestKMSOutputModes(unittest.TestCase):
 
     def testWs2811StartupStats(self):
         layout = [
-            [[0, 0, 0, 0], [0, 0, 0, -1]],
+            [[0, 0, 0, 1, 0, 0], [0, 0, 0, 0, -1, 0]],
             [],
-            [[0, 0, 0, 2]],
+            [[0, 0, 0, 1, 2, 0]],
         ]
         mode = fbmatrix.output_mode('ws2811', layout)
         self.assertEqual(
@@ -452,9 +442,9 @@ class TestKMSOutputModes(unittest.TestCase):
 class TestLayout(unittest.TestCase):
     def testActiveBoundsExcludeInactivePadding(self):
         layout = [[
-            (-1, -0.5, 0, 0),
-            (1, 0.5, 0, 0),
-            (10, 10, 0, -1),
+            (-1, -0.5, 0, 1, 0, 0),
+            (1, 0.5, 0, 1, 0, 1),
+            (10, 10, 0, 0, -1, 0),
         ]]
         self.assertEqual((-1.0, 1.0, -0.5, 0.5),
                          ledlayout.active_xy_bounds(layout))
@@ -468,96 +458,73 @@ class TestLayout(unittest.TestCase):
 
     def testLayoutSourceSizeUsesActiveAspect(self):
         layout = [[
-            (-1.0, -0.8, 0, 0), (-0.9, -0.8, 0, 0),
-            (-0.8, -0.8, 0, 0), (1.0, 0.8, 0, -1),
+            (-1.0, -0.8, 0, 1, 0, 0), (-0.9, -0.8, 0, 1, 0, 0.5),
+            (-0.8, -0.8, 0, 1, 0, 1), (1.0, 0.8, 0, 0, -1, 0),
         ], [
-            (-1.0, 0.8, 0, 0), (-0.9, 0.8, 0, 0),
-            (-0.8, 0.8, 0, 0), (1.0, -0.8, 0, 0),
+            (-1.0, 0.8, 0, 1, 1, 0), (-0.9, 0.8, 0, 1, 1, 0.5),
+            (-0.8, 0.8, 0, 1, 1, 1), (1.0, -0.8, 0, 1, 2, 0),
         ]]
         self.assertEqual((84, 68), common.layout_source_size(layout, 4))
 
     def testTypicalActiveSpacingIgnoresInactiveBreaks(self):
         layout = [[
-            (0, 0, 0, 0), (0.1, 0, 0, 0),
-            (20, 20, 0, -1),
-            (1, 1, 0, 0), (1.1, 1, 0, 0),
+            (0, 0, 0, 1, 0, 0), (0.1, 0, 0, 1, 0, 1),
+            (20, 20, 0, 0, -1, 0),
+            (1, 1, 0, 1, 1, 0), (1.1, 1, 0, 1, 1, 1),
         ]]
         self.assertAlmostEqual(0.1, ledlayout.typical_active_spacing(layout))
 
     def testStringLayoutRejectsStringsOver2000Leds(self):
         with self.assertRaisesRegex(RuntimeError, 'string 0 contains 2001 LEDs'):
-            ledlayout.require_xyzc_string_layout(
-                [[[0.0, 0.0, 0.0, 0]] * 2001])
+            ledlayout.require_led_string_layout(
+                [[[0.0, 0.0, 0.0, 1, 0, 0]] * 2001])
 
     def testStringLayoutPreservesStringBoundaries(self):
         self.assertEqual(
-            ledlayout.require_xyzc_string_layout([
-                [[0, 0, 0, 0]],
-                [[1, 1, 0, -1], [2, 2, 0, 0]],
+            ledlayout.require_led_string_layout([
+                [[0, 0, 0, 1, 2, 0.25]],
+                [[1, 1, 0, 0, -1, 0], [2, 2, 0, 1, 3, 0.75]],
             ]),
             [
-                [(0.0, 0.0, 0.0, 0)],
-                [(1.0, 1.0, 0.0, -1), (2.0, 2.0, 0.0, 0)],
+                [(0.0, 0.0, 0.0, 1.0, 2.0, 0.25)],
+                [(1.0, 1.0, 0.0, 0.0, -1.0, 0.0),
+                 (2.0, 2.0, 0.0, 1.0, 3.0, 0.75)],
             ],
         )
 
     def testStringLayoutAllowsEmptyStringsForPinSelection(self):
         self.assertEqual(
-            ledlayout.require_xyzc_string_layout([
+            ledlayout.require_led_string_layout([
                 [],
-                [[1, 1, 0, 0]],
+                [[1, 1, 0, 1, 0, 0]],
             ]),
-            [[], [(1.0, 1.0, 0.0, 0)]],
+            [[], [(1.0, 1.0, 0.0, 1.0, 0.0, 0.0)]],
         )
 
-    def testLayoutRequiresColorMarker(self):
-        with self.assertRaisesRegex(RuntimeError, r'\[x, y, z, c\]'):
-            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0]])
+    def testLayoutRequiresFixedAttributes(self):
+        with self.assertRaisesRegex(RuntimeError, r'enabled, line, line_position'):
+            ledlayout.require_led_layout([[0.0, 0.0, 0.0]])
 
-    def testLayoutSourceModeMustBeInteger(self):
-        with self.assertRaisesRegex(RuntimeError, 'integer'):
-            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 1.5]])
+    def testLayoutValuesMustBeFinite(self):
+        with self.assertRaisesRegex(RuntimeError, 'finite'):
+            ledlayout.require_led_layout([[0, 0, 0, 1, float('nan'), 0]])
 
-    def testLayoutSourceModeMustBeKnown(self):
-        with self.assertRaisesRegex(RuntimeError, '-1, 0, 1, 2, 3 or 4'):
-            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, 5]])
-
-    def testLayoutAcceptsInactiveSourceMode(self):
+    def testLayoutAcceptsInactiveLed(self):
         self.assertEqual(
-            ledlayout.require_xyzc_layout([[0.0, 0.0, 0.0, -1]]),
-            [(0.0, 0.0, 0.0, -1)],
+            ledlayout.require_led_layout([[0, 0, 0, 0, -1, 0]]),
+            [(0.0, 0.0, 0.0, 0.0, -1.0, 0.0)],
         )
 
-    def testLoadLayoutClearsColorSourceModesByDefault(self):
+    def testLoadLayoutRejectsFourFieldRecords(self):
         with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
             f.write('[[[0, 0, 0, 2]]]')
             filename = f.name
 
         try:
-            self.assertEqual(common.load_layout(filename), [[(0.0, 0.0, 0.0, 0)]])
+            with self.assertRaisesRegex(RuntimeError, 'enabled, line, line_position'):
+                common.load_layout(filename)
         finally:
             os.unlink(filename)
-
-    def testLoadLayoutPreservesInactiveSourceModeByDefault(self):
-        with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
-            f.write('[[[0, 0, 0, -1]]]')
-            filename = f.name
-
-        try:
-            self.assertEqual(common.load_layout(filename), [[(0.0, 0.0, 0.0, -1)]])
-        finally:
-            os.unlink(filename)
-
-    def testLoadLayoutCanPreserveSourceModes(self):
-        with tempfile.NamedTemporaryFile('wt', suffix='.json', delete=False) as f:
-            f.write('[[[0, 0, 0, 2]]]')
-            filename = f.name
-
-        try:
-            self.assertEqual(common.load_layout(filename, preserve_source_modes=True), [[(0.0, 0.0, 0.0, 2)]])
-        finally:
-            os.unlink(filename)
-
 
 class TestGenerateLayout(unittest.TestCase):
     def runGenerator(self, *args):
@@ -591,10 +558,10 @@ class TestGenerateLayout(unittest.TestCase):
         self.assertLayoutStats(result, 'square', 4, active=4, inactive=0)
         self.assertNotIn('Sections:', result.stderr)
         self.assertEqual([[
-            [-0.5, -0.5, 0, 1],
-            [0.5, -0.5, 0, 1],
-            [0.5, 0.5, 0, 2],
-            [-0.5, 0.5, 0, 2],
+            [-0.5, -0.5, 0, 1.0, 0.0, 0.0],
+            [0.5, -0.5, 0, 1.0, 0.0, 1.0],
+            [0.5, 0.5, 0, 1.0, 1.0, 1.0],
+            [-0.5, 0.5, 0, 1.0, 1.0, 0.0],
         ]], json.loads(result.stdout))
 
     def testSquareLayoutUsesConfiguredStringLength(self):
@@ -656,7 +623,6 @@ class TestGenerateLayout(unittest.TestCase):
             '--led-distance', '0.1',
             '--hub-radius', '0.2',
             '--spokes', '32',
-            '--source-modes', 'framebuffer',
         )
 
         strings = json.loads(result.stdout)
@@ -674,17 +640,17 @@ class TestGenerateLayout(unittest.TestCase):
         self.assertIn('Radial section top-left/1: 4 spokes', result.stderr)
 
         self.assertEqual(8 * 250, len(layout))
-        self.assertTrue(all(len(lamp) == 4 for lamp in layout))
+        self.assertTrue(all(len(lamp) == 6 for lamp in layout))
         self.assertTrue(all(-1.0 <= lamp[0] <= 1.0 for lamp in layout))
         self.assertTrue(all(-1.0 <= lamp[1] <= 1.0 for lamp in layout))
-        self.assertTrue(any(lamp[3] == -1 for lamp in layout))
         self.assertTrue(any(lamp[3] == 0 for lamp in layout))
+        self.assertTrue(any(lamp[3] == 1 for lamp in layout))
 
         non_padding_points = [lamp for lamp in layout if lamp[:3] != [0.0, 0.0, 0]]
         self.assertLessEqual(max(abs(lamp[0]) for lamp in non_padding_points), 6.0 / 7.0 + 1e-6)
         self.assertAlmostEqual(1.0, max(abs(lamp[1]) for lamp in non_padding_points), places=6)
 
-        active_points = {(round(lamp[0], 6), round(lamp[1], 6)) for lamp in layout if lamp[3] == 0}
+        active_points = {(round(lamp[0], 6), round(lamp[1], 6)) for lamp in layout if lamp[3] > 0}
         for x, y in active_points:
             self.assertIn((round(-x, 6), y), active_points)
             self.assertIn((x, round(-y, 6)), active_points)
@@ -706,15 +672,15 @@ class TestGenerateLayout(unittest.TestCase):
         current_mode = None
 
         for lamp in first_section:
-            mode = lamp[3]
-            if mode in (1, 2, 3):
-                if mode != current_mode:
-                    active_runs.append(mode)
-                    current_mode = mode
+            line = lamp[4]
+            if lamp[3] > 0:
+                if line != current_mode:
+                    active_runs.append(line)
+                    current_mode = line
             else:
                 current_mode = None
 
-        self.assertEqual([3, 1, 2, 3], active_runs)
+        self.assertEqual([17.0, 18.0, 19.0, 20.0], active_runs)
 
     def testRadialLayoutRequiresSpokesDivisibleByEight(self):
         result = self.runGenerator(
@@ -748,7 +714,7 @@ class TestGenerateLayout(unittest.TestCase):
         hub_radius = 0.2 / (7.0 / 2.0)
         for section_index in range(0, 8):
             section = layout[section_index * 250:(section_index + 1) * 250]
-            used = [lamp for lamp in section if lamp[3] != -1 or lamp[:3] != [0.0, 0.0, 0]]
+            used = [lamp for lamp in section if lamp[3] > 0 or lamp[:3] != [0.0, 0.0, 0]]
             self.assertAlmostEqual(hub_radius, math.hypot(used[0][0], used[0][1]), places=6)
             self.assertAlmostEqual(hub_radius, math.hypot(used[-1][0], used[-1][1]), places=6)
 
@@ -781,7 +747,6 @@ class TestGenerateLayout(unittest.TestCase):
             '--spokes', '32',
             '--center-spacing', '1.6',
             '--max-spoke-length', '2.2',
-            '--source-modes', 'framebuffer',
         )
 
         strings = json.loads(result.stdout)
@@ -797,18 +762,18 @@ class TestGenerateLayout(unittest.TestCase):
         )
 
         self.assertEqual(8 * 250, len(layout))
-        self.assertTrue(all(len(lamp) == 4 for lamp in layout))
+        self.assertTrue(all(len(lamp) == 6 for lamp in layout))
         self.assertTrue(all(-1.0 <= lamp[0] <= 1.0 for lamp in layout))
         self.assertTrue(all(-1.0 <= lamp[1] <= 1.0 for lamp in layout))
-        self.assertTrue(any(lamp[3] == -1 for lamp in layout))
         self.assertTrue(any(lamp[3] == 0 for lamp in layout))
+        self.assertTrue(any(lamp[3] == 1 for lamp in layout))
 
         non_padding_points = [lamp for lamp in layout if lamp[:3] != [0.0, 0.0, 0]]
         self.assertLessEqual(max(abs(lamp[0]) for lamp in non_padding_points), 4.0 / 5.0 + 1e-6)
         self.assertAlmostEqual(0.96, max(abs(lamp[1]) for lamp in non_padding_points), places=6)
 
         section_actives = [
-            [lamp for lamp in layout[i * 250:(i + 1) * 250] if lamp[3] == 0]
+            [lamp for lamp in layout[i * 250:(i + 1) * 250] if lamp[3] > 0]
             for i in range(0, 8)
         ]
         self.assertTrue(all(section for section in section_actives))
@@ -868,7 +833,6 @@ class TestGenerateLayout(unittest.TestCase):
             '--spokes', '28',
             '--center-spacing', '1.6',
             '--max-spoke-length', '2.2',
-            '--source-modes', 'framebuffer',
         )
 
         strings = json.loads(result.stdout)
@@ -886,7 +850,6 @@ class TestGenerateLayout(unittest.TestCase):
             '--spokes', '52',
             '--center-spacing', '1.5',
             '--max-spoke-length', '2.8',
-            '--source-modes', 'framebuffer',
         )
 
         strings = json.loads(result.stdout)
@@ -907,7 +870,6 @@ class TestGenerateLayout(unittest.TestCase):
             '--led-distance', '0.1',
             '--hub-radius', '0.2',
             '--spokes', '32',
-            '--source-modes', 'framebuffer',
         )
         dual_radial = self.runGenerator(
             'dual-radial',
@@ -917,7 +879,6 @@ class TestGenerateLayout(unittest.TestCase):
             '--hub-radius', '0.2',
             '--spokes', '32',
             '--center-spacing', '0',
-            '--source-modes', 'framebuffer',
         )
 
         self.assertLayoutStats(radial, 'radial', 8 * 250, sections=8)

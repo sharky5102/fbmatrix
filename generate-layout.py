@@ -5,14 +5,7 @@ import math
 import sys
 
 
-def source_mode(source_modes, index):
-    if source_modes == 'row-colors':
-        return index % 3 + 1
-
-    return 0
-
-
-def generate_square(columns, rows, source_modes):
+def generate_square(columns, rows):
     size = min(2.0 / columns, 2.0 / rows)
     yoff = -(rows * size) / 2
     xoff = -(columns * size) / 2
@@ -30,7 +23,9 @@ def generate_square(columns, rows, source_modes):
             xoff + ((column + 0.5) * size),
             yoff + ((row + 0.5) * size),
             0,
-            source_mode(source_modes, row),
+            1.0,
+            float(row),
+            float(column) / float(columns - 1) if columns > 1 else 0.0,
         ))
 
     return points
@@ -110,9 +105,9 @@ def quarter_name(x, y):
     return 'bottom-right'
 
 
-def normalize_point(x, y, width, height, mode):
+def normalize_point(x, y, width, height, enabled, line, line_position):
     scale = max(width, height) / 2.0
-    return (x / scale, y / scale, 0, mode)
+    return (x / scale, y / scale, 0, enabled, line, line_position)
 
 
 def clipped_endpoint(start, end, max_length):
@@ -132,26 +127,29 @@ def clipped_endpoint(start, end, max_length):
     )
 
 
-def points_on_spoke(angle, edge_distance, hub_radius, led_distance, outward, mode, width, height):
+def points_on_spoke(angle, edge_distance, hub_radius, led_distance, outward, line, width, height):
     count = int(math.floor((edge_distance - hub_radius) / led_distance)) + 1
     distances = [hub_radius + (i * led_distance) for i in range(0, count)]
 
     if not outward:
         distances = list(reversed(distances))
 
+    extent = edge_distance - hub_radius
     return [
         normalize_point(
             math.cos(angle) * distance,
             math.sin(angle) * distance,
             width,
             height,
-            mode,
+            1.0,
+            float(line),
+            (distance - hub_radius) / extent if extent else 0.0,
         )
         for distance in distances
     ]
 
 
-def points_on_segment(start, end, led_distance, outward, mode, width, height):
+def points_on_segment(start, end, led_distance, outward, line, width, height):
     distance = math.hypot(end[0] - start[0], end[1] - start[1])
     count = int(math.floor(distance / led_distance)) + 1
     distances = [i * led_distance for i in range(0, count)]
@@ -171,7 +169,9 @@ def points_on_segment(start, end, led_distance, outward, mode, width, height):
             start[1] + (dy * offset),
             width,
             height,
-            mode,
+            1.0,
+            float(line),
+            offset / distance,
         )
         for offset in distances
     ]
@@ -186,7 +186,7 @@ def inactive_hop_points(start, end, led_distance, width, height):
         t = (i + 1.0) / (count + 1.0)
         x = start[0] + ((end[0] - start[0]) * t)
         y = start[1] + ((end[1] - start[1]) * t)
-        points.append(normalize_point(x, y, width, height, 4))
+        points.append(normalize_point(x, y, width, height, 0.0, -1.0, 0.0))
 
     return points
 
@@ -198,10 +198,12 @@ def finish_fixed_section(section, section_leds, description):
             % (description, len(section), section_leds)
         )
 
-    return section + ([(0.0, 0.0, 0, -1)] * (section_leds - len(section)))
+    return section + ([(0.0, 0.0, 0, 0.0, -1.0, 0.0)] *
+                      (section_leds - len(section)))
 
 
-def generate_radial(width, height, led_distance, hub_radius, spokes, section_leds, source_modes, max_spoke_length=None):
+def generate_radial(width, height, led_distance, hub_radius, spokes,
+                    section_leds, max_spoke_length=None):
     if spokes % 8 != 0:
         raise RuntimeError('Radial layout requires --spokes to be divisible by 8')
     if width <= 0 or height <= 0:
@@ -294,14 +296,13 @@ def generate_radial(width, height, led_distance, hub_radius, spokes, section_led
 
             for spoke_index, spoke in enumerate(section_spokes):
                 outward = spoke_index % 2 == 0
-                mode = source_mode(source_modes, spoke['index'])
                 section.extend(points_on_spoke(
                     spoke['angle'],
                     spoke['edge_distance'],
                     hub_radius,
                     led_distance,
                     outward,
-                    mode,
+                    spoke['index'],
                     width,
                     height,
                 ))
@@ -345,7 +346,7 @@ def dual_radial_edge_spacing(spokes):
     return spacings
 
 
-def dual_radial_section_points(runs, led_distance, mode, width, height):
+def dual_radial_section_points(runs, led_distance, width, height):
     section = []
 
     for run_index, run in enumerate(runs):
@@ -355,7 +356,7 @@ def dual_radial_section_points(runs, led_distance, mode, width, height):
             run['end'],
             led_distance,
             outward,
-            mode,
+            run['line_index'],
             width,
             height,
         ))
@@ -370,7 +371,8 @@ def dual_radial_section_points(runs, led_distance, mode, width, height):
     return section
 
 
-def split_dual_radial_part(part_name, runs, led_distance, section_leds, source_modes, section_index, width, height):
+def split_dual_radial_part(part_name, runs, led_distance, section_leds,
+                           width, height):
     if len(runs) < 4 or len(runs) % 2:
         raise RuntimeError('Dual radial part %s must contain an even number of runs for two sections' % part_name)
 
@@ -379,14 +381,12 @@ def split_dual_radial_part(part_name, runs, led_distance, section_leds, source_m
         first = dual_radial_section_points(
             runs[:split],
             led_distance,
-            source_mode(source_modes, section_index),
             width,
             height,
         )
         second = dual_radial_section_points(
             runs[split:],
             led_distance,
-            source_mode(source_modes, section_index + 1),
             width,
             height,
         )
@@ -421,7 +421,6 @@ def generate_dual_radial(
         spokes,
         center_spacing,
         section_leds,
-        source_modes,
         max_spoke_length=None):
     if width <= 0 or height <= 0:
         raise RuntimeError('Dual radial layout requires positive --width and --height')
@@ -439,7 +438,6 @@ def generate_dual_radial(
             hub_radius,
             spokes,
             section_leds,
-            source_modes,
             max_spoke_length=max_spoke_length,
         )
     if spokes % 4 != 0:
@@ -556,6 +554,8 @@ def generate_dual_radial(
     all_runs = []
     for _part_name, runs in part_specs:
         all_runs.extend(runs)
+    for line_index, run in enumerate(all_runs):
+        run['line_index'] = line_index
 
     print_perimeter_crossings({
         edge: [
@@ -567,14 +567,12 @@ def generate_dual_radial(
     })
 
     points = []
-    for part_index, (part_name, runs) in enumerate(part_specs):
+    for part_name, runs in part_specs:
         points.extend(split_dual_radial_part(
             part_name,
             runs,
             led_distance,
             section_leds,
-            source_modes,
-            part_index * 2,
             width,
             height,
         ))
@@ -583,9 +581,9 @@ def generate_dual_radial(
 
 
 def layout_stats(points, section_leds=None):
-    active = sum(1 for point in points if point[3] != -1 and point[3] != 4)
+    active = sum(1 for point in points if point[3] > 0.0)
     inactive = len(points) - active
-    padding = sum(1 for point in points if point[3] == -1)
+    padding = sum(1 for point in points if point[3] <= 0.0 and point[:3] == (0.0, 0.0, 0))
     connector = inactive - padding
     stats = {
         'total': len(points),
@@ -601,11 +599,11 @@ def layout_stats(points, section_leds=None):
             for start in range(0, len(points), section_leds)
         ]
         used_per_section = [
-            sum(1 for point in section if point[3] != -1 or point[:3] != (0.0, 0.0, 0))
+            sum(1 for point in section if point[3] > 0.0 or point[:3] != (0.0, 0.0, 0))
             for section in sections
         ]
         active_per_section = [
-            sum(1 for point in section if point[3] != -1)
+            sum(1 for point in section if point[3] > 0.0)
             for section in sections
         ]
         inactive_per_section = [
@@ -654,13 +652,6 @@ def parse_args():
             'of --section-leds (default: largest whole-section value up to 500)'
         ),
     )
-    parser.add_argument(
-        '--source-modes',
-        default='row-colors',
-        choices=['framebuffer', 'row-colors'],
-        help='Source mode values to write into the generated layout',
-    )
-
     square = parser.add_argument_group('square layout')
     square.add_argument('--columns', help='Number of columns for matrix displays', type=int)
     square.add_argument('--rows', help='Number of rows for matrix displays', type=int)
@@ -723,7 +714,7 @@ def main():
 
     try:
         if args.type == 'square':
-            points = generate_square(args.columns, args.rows, args.source_modes)
+            points = generate_square(args.columns, args.rows)
         elif args.type == 'radial':
             points = generate_radial(
                 args.width,
@@ -732,7 +723,6 @@ def main():
                 args.hub_radius,
                 args.spokes,
                 args.section_leds,
-                args.source_modes,
                 max_spoke_length=args.max_spoke_length,
             )
         else:
@@ -744,7 +734,6 @@ def main():
                 args.spokes,
                 args.center_spacing,
                 args.section_leds,
-                args.source_modes,
                 max_spoke_length=args.max_spoke_length,
             )
     except RuntimeError as e:

@@ -48,7 +48,7 @@ class tree(geometry.base):
     attributes = { 'position' : 3, 'id' : 1, 'emitter' : 2 }
         
     def __init__(self, jsondata, emitter_shape, string_lengths):
-        self.lamps = ledlayout.require_xyzc_layout(jsondata)
+        self.lamps = ledlayout.require_led_layout(jsondata)
         self.tex = 0
         self.time = 0
 
@@ -91,7 +91,7 @@ class tree(geometry.base):
         for i in range(0, len(self.lamps)):
             vert = self.lamps[i]
             for face in faces:
-                lx, ly, lz, _marker = vert
+                lx, ly, lz = vert[:3]
                 ly = -ly
                 x, y, z = sqverts[face]
                 

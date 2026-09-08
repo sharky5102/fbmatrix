@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import common
+import led_effect
 
 def render_contrast():
     global bytearray
@@ -134,7 +136,12 @@ if args.channel not in channels:
     print('channel muse be one of %r' % channels)
     exit(1)
 
-matrix = common.renderer_from_args(args, preserve_source_modes=args.type == 'layout-colors')
+matrix = common.renderer_from_args(args)
+
+if args.type == 'layout-colors' and matrix.displaytype == 'ws2811':
+    effects_dir = os.path.join(os.path.dirname(__file__), 'led_effects')
+    matrix.ledbuffer.set_effect_source(
+        led_effect.load_effect_source(effects_dir, 'layout_colors'))
 
 import assembly.bytearray
 bytearray = assembly.bytearray.bytearray()

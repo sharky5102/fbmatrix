@@ -14,10 +14,11 @@ float hash31(vec3 p)
 }
 
 void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex,
-             in int stringIndex, in int sourceMode)
+             in float stringIndex, in float enabled, in float lineIndex,
+             in float linePosition)
 {
-    vec4 source = defaultSource(ledPosition, sourceMode);
-    float emitter = ledIndex + float(stringIndex) * 4099.0;
+    vec4 source = sampleSource(ledPosition);
+    float emitter = ledIndex + stringIndex * 4099.0;
     float seed = hash11(emitter + hash31(ledPosition + 17.0) * 4096.0);
     float rate = mix(0.8, 2.4, hash11(seed + 2.0));
     float phase = floor(iTime * rate + seed * 29.0);

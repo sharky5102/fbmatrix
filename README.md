@@ -193,36 +193,33 @@ The current WS281x universe-to-pin mapping is:
 | 12 | OE | GPIO4 |
 | 13 | CLK | GPIO17 |
 
-Additionally, you will have to supply a layout to the renderer. The layout
-lists the position in 3d space of each of your LEDs plus an integer source
-mode. In most cases, your layout will have the LEDs in a flat surface, so the
-z value (the third value of each pixel), will be 0.0. The source mode controls
-where the LED color comes from:
+Additionally, you will have to supply a layout to the renderer. Each LED is a
+six-number record:
 
-- `-1`: inactive LED, always black
-- `0`: sample the source framebuffer normally
-- `1`: ignore the framebuffer and use red
-- `2`: ignore the framebuffer and use green
-- `3`: ignore the framebuffer and use blue
+    [x, y, z, enabled, line, line_position]
 
-The command-line tools clear color source modes 1, 2 and 3 to 0 when loading a
-layout, except for `fbmtest layout-colors`. Inactive source mode -1 is
-preserved by all command-line tools, including `fbmtest`, `fbmplay` and
-`fbmserve`. This lets one layout file contain diagnostic source modes for
-testing while still marking bridge or spacer LEDs as always black during normal
-playback.
+In most cases the LEDs form a flat surface, so `z` is `0.0`. `enabled` is
+`1.0` for an active emitter and `0.0` for a physical bridge, connector or
+padding LED which must remain black. `line` identifies the logical row, spoke
+or run containing the LED. `line_position` ranges from `0.0` to `1.0` along
+that line in a consistent geometric direction, independently of serpentine
+wiring direction.
+
+The renderer also derives the LED's index within its physical string and its
+string index. Position, enabled state, logical line, line position and both
+wire indices are available to per-emitter shaders. All values use 32-bit float
+storage on the GPU. Inactive LEDs are forced black after the emitter shader.
 
 Example contents for a 3-pixel ws281x string:
 
     [
-      [ -1.0, 0.0, 0.0, 0 ],
-      [  0.0, 0.0, 0.0, -1 ],
-      [  1.0, 0.0, 0.0, 0 ]
+      [ -1.0, 0.0, 0.0, 1.0, 0.0, 0.0 ],
+      [  0.0, 0.0, 0.0, 0.0, 0.0, 0.5 ],
+      [  1.0, 0.0, 0.0, 1.0, 0.0, 1.0 ]
     ]
 
-As you can see, the values should be normalized to a (-1, 1) range. The file
-above defines 3 LEDs, the first on the left, then one in the middle, and then
-one on the right. Each pixel has an x, y, z and c parameter.
+The position values should be normalized to a `[-1, 1]` range. The file above
+defines three LEDs from left to right; the middle physical LED is disabled.
 
 If you keep the layout in JSON, load it in your application and pass it to
 the renderer explicitly:
@@ -246,16 +243,17 @@ layout.json file:
 
     ./generate-layout.py square --columns 64 --rows 16 > layout.json
 
-By default, the generated layout cycles row source modes through red, blue and
-green for `fbmtest layout-colors`. Use `--source-modes framebuffer` to write
-source mode 0 for every LED instead.
+Generated layouts assign a logical line number and normalized position within
+that line. `fbmtest layout-colors` cycles colors by logical line, which makes
+rows, spokes and runs easy to distinguish while hanging or debugging LEDs.
+The same **Layout Colors** emitter effect is available in `fbmserve`.
 
 `generate-layout.py` can also generate a radial serpentine layout for physical
 rectangles. Radial layouts divide the string into 8 fixed sections: two
 balanced even spoke groups for each of the top-left, top-right, bottom-right
 and bottom-left quarters. Each section is padded to `--section-leds` LEDs,
 defaulting to 250. Padding LEDs and connector LEDs between spokes are written
-with source mode `-1`, so they remain inactive during playback.
+with `enabled` set to `0.0`, so they remain inactive during playback.
 
 Physical radial layouts are normalized into the square `[-1, 1]` coordinate
 space without changing aspect ratio. The larger physical dimension reaches the
@@ -266,7 +264,7 @@ about `-0.857` and `0.857`.
 For example, this generates a 6 by 7 meter radial layout with 10cm LED spacing,
 a 20cm central hub and 32 spokes:
 
-    ./generate-layout.py radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 32 --source-modes framebuffer > layout.json
+    ./generate-layout.py radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 32 > layout.json
 
 The spoke count must be divisible by 8, so each quarter has an even number of
 spokes. The generator splits each quarter into two even sections, such as 6/8
@@ -291,12 +289,13 @@ top-right, bottom-right and bottom-left. Each part contains two fixed LED
 sections, so the generated layout has 8 sections total. Each section is padded
 to `--section-leds` LEDs, defaulting to 250. A section may continue from side
 fan runs into parallel center runs, and every section starts and ends either at
-a hub or on the center line. Connector and padding LEDs use source mode `-1`.
+a hub or on the center line. Connector and padding LEDs have `enabled` set to
+`0.0`.
 
 For example, this generates a 4 by 5 meter dual radial layout with two hubs
 1.6 meters apart:
 
-    ./generate-layout.py dual-radial --width 4 --height 5 --led-distance 0.1 --hub-radius 0.2 --spokes 32 --center-spacing 1.6 --source-modes framebuffer > layout.json
+    ./generate-layout.py dual-radial --width 4 --height 5 --led-distance 0.1 --hub-radius 0.2 --spokes 32 --center-spacing 1.6 > layout.json
 
 The dual radial spoke count is the total number of radial spokes across both
 semicircular regions and must be divisible by 4. When `--center-spacing 0` is
@@ -308,7 +307,7 @@ long spokes before placing LEDs, which is useful for trimming rectangle corners
 when a section would otherwise exceed `--section-leds`. For example, this keeps
 the longest runs in the 6 by 7 meter dual radial layout below 2.8 meters:
 
-    ./generate-layout.py dual-radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 52 --center-spacing 1.5 --max-spoke-length 2.8 --source-modes framebuffer > layout.json
+    ./generate-layout.py dual-radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 52 --center-spacing 1.5 --max-spoke-length 2.8 > layout.json
 
 To play a video, use the same procedure as for HUB75 to play a video, except
 add the --display parameter:
@@ -373,9 +372,11 @@ Emitter effects are loaded from `led_effects/`. The output texture has one row
 per string and one column per LED, and shaders use this entry point:
 
     void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex,
-                 in int stringIndex, in int sourceMode)
+                 in float stringIndex, in float enabled, in float lineIndex,
+                 in float linePosition)
 
-`ledIndex` is the LED's column within its string. The shader can call
-`defaultSource(ledPosition, sourceMode)` to preserve layout source modes and
-sample the underlying framebuffer, call `sampleSource(ledPosition)` directly,
-or ignore the source framebuffer.
+`ledIndex` is the LED's column within its string. `lineIndex` identifies its
+logical row, spoke or run, while `linePosition` gives its normalized geometric
+position on that line. The shader can call `sampleSource(ledPosition)` or
+ignore the source framebuffer. The renderer forces disabled LEDs black after
+the shader returns.

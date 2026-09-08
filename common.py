@@ -27,33 +27,25 @@ def add_args(parser):
     ws2811.add_argument('--layout', default='layout.json', help='JSON file containing WS2811 LED positions')
 
 
-def load_layout(filename, preserve_source_modes=False):
+def load_layout(filename):
     last_error = None
 
     for encoding in ('utf-8-sig', 'utf-16'):
         try:
             with open(filename, 'rt', encoding=encoding) as f:
-                layout = ledlayout.require_xyzc_string_layout(json.load(f))
-                if preserve_source_modes:
-                    return layout
-
-                return [
-                    [(x, y, z, -1 if source_mode == -1 else 0)
-                     for x, y, z, source_mode in string]
-                    for string in layout
-                ]
+                return ledlayout.require_led_string_layout(json.load(f))
         except (UnicodeDecodeError, JSONDecodeError) as e:
             last_error = e
 
     raise RuntimeError('Could not read layout JSON from %s: %s' % (filename, last_error))
 
 
-def renderer_from_args(args, preserve_source_modes=False):
+def renderer_from_args(args):
     layout = None
     display = 'ws2811' if args.emulate else args.display
 
     if display == 'ws2811':
-        layout = load_layout(args.layout, preserve_source_modes=preserve_source_modes)
+        layout = load_layout(args.layout)
 
     if args.source_scale <= 0:
         raise RuntimeError('--source-scale must be greater than zero')
