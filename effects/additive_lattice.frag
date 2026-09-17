@@ -1,9 +1,4 @@
-vec3 hueColor(float hue)
-{
-    vec3 p = abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-    return clamp(p - 1.0, 0.0, 1.0);
-}
-
+// Palette: 3 fixed colors. Black renders as black.
 float softBars(vec2 p, float angle, float spacing, float speed)
 {
     vec2 dir = vec2(cos(angle), sin(angle));
@@ -24,13 +19,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     float e = softBars(p, 2.36, 14.0, -2.0);
 
     vec3 color = vec3(0.0);
-    color += hueColor(iHue + 0.00) * a;
-    color += hueColor(iHue + 0.17) * b;
-    color += hueColor(iHue + 0.34) * c;
-    color += hueColor(iHue + 0.52) * e;
+    color += iColor1 * a;
+    color += iColor2 * b;
+    color += iColor3 * c;
+    color += iColor1 * e;
 
     float hotspot = a * b + b * c + c * e + e * a;
-    color += vec3(1.0) * hotspot * 0.5;
+    color *= 1.0 + hotspot * 0.5;
     color *= smoothstep(1.35, 0.0, d);
 
     fragColor = vec4(min(color, vec3(1.0)), 1.0);

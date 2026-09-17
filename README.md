@@ -345,6 +345,32 @@ overrides are reserved for HUB75 and are rejected for WS2811.
 
 The browser UI is served from `web/`, and effects are loaded from `effects/`.
 
+Effects use three RGB palette slots, always editable in the web UI. `solid`
+uses Color 1; `additive_bars` and `additive_lattice` use all three colors;
+the other effects use Colors 1 and 2. Black is a real color: elements assigned
+to a black slot go dark, without reassignment to another slot. Set the colors
+equal for a monochrome pattern. Autoplay retains the selected palette.
+The palette affects generated effects, not NDI video. Master brightness remains
+separate from the palette.
+
+Effect speed is a multiplier from 0 to 4, defaults to 1, and is exposed as
+`speed` in the state API and as `--speed` on the command line. Zero freezes the
+generated animation. Speed changes preserve animation phase; they do not affect
+NDI playback, autoplay intervals, or emitter-shader timing.
+
+`GET /api/state` returns `color1`, `color2`, and `color3` as RGB arrays with
+three numeric components from 0 to 1. `POST /api/state` accepts partial updates,
+for example:
+
+```json
+{"color1": [0, 0, 1], "color2": [1, 1, 0], "color3": [1, 0, 0], "speed": 1.5, "brightness": 0.5}
+```
+
+Invalid color arrays are rejected with HTTP 400. The defaults are blue, yellow,
+and red. Command-line equivalents are `--color1 0,0,1 --color2 1,1,0
+--color3 1,0,0`. Hue controls and the `full_hue_gradient` effect have been removed;
+old hue-based state files are obsolete and reset to command-line defaults.
+
 ### NDI input
 
 `fbmserve.py` can optionally discover and receive NDI video using the native NDI
@@ -360,8 +386,11 @@ Effects use a Shadertoy-style fragment entry point:
 
     void mainImage(out vec4 fragColor, in vec2 fragCoord)
 
-The renderer provides `iTime`, `iResolution`, `iHue` and `iBrightness`
-uniforms. The usual output flags such as `--display`, `--layout`, `--emulate`,
+The effect renderer provides `iTime`, `iResolution`, and the RGB `vec3` uniforms
+`iColor1`, `iColor2`, and `iColor3`. Each effect uses a fixed number of colors,
+indicated in its source comment. Brightness is applied separately by the WS2811
+emitter stage and the browser preview. The usual output flags such as
+`--display`, `--layout`, `--emulate`,
 `--preview` and `--raw` are shared with `fbmtest.py` and `fbmplay.py`.
 
 For WS2811 output, `fbmserve.py` can apply a per-emitter shader selected in

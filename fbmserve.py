@@ -2,6 +2,7 @@
 import argparse
 import dataclasses
 import json
+import math
 import mimetypes
 import os
 import queue
@@ -30,7 +31,10 @@ class AppState:
     # Fields are durable by default. Runtime-only fields must opt out, making a
     # newly added setting automatically participate in serialization.
     effect: str
-    hue: float
+    color1: list
+    color2: list
+    color3: list
+    speed: float
     brightness: float
     autoplay: bool
     autoplay_interval: float
@@ -49,7 +53,10 @@ class AppState:
     def __init__(
         self,
         effect,
-        hue=0.0,
+        color1=(0.0, 0.0, 1.0),
+        color2=(1.0, 1.0, 0.0),
+        color3=(1.0, 0.0, 0.0),
+        speed=1.0,
         brightness=1.0,
         autoplay=False,
         autoplay_interval=30.0,
@@ -64,7 +71,10 @@ class AppState:
     ):
         self.lock = threading.Lock()
         self.effect = effect
-        self.hue = hue
+        self.color1 = validate_color(color1)
+        self.color2 = validate_color(color2)
+        self.color3 = validate_color(color3)
+        self.speed = speed
         self.brightness = brightness
         self.autoplay = autoplay
         self.autoplay_interval = autoplay_interval
@@ -151,6 +161,8 @@ class InputRenderer:
         self.state = state
         self.commands = commands
         self.started = time.monotonic()
+        self.effect_time = 0.0
+        self.last_effect_tick = self.started
         self.next_autoplay = time.monotonic()
         self.current_effect = None
         self.failed_effect = None
@@ -170,6 +182,9 @@ class InputRenderer:
         self.apply_commands()
         self.apply_autoplay()
         snapshot = self.state.snapshot()
+        tick = time.monotonic()
+        self.effect_time += (tick - self.last_effect_tick) * snapshot['speed']
+        self.last_effect_tick = tick
 
         if self.matrix is not None:
             self.matrix.set_supersample(snapshot['supersample'])
@@ -186,7 +201,7 @@ class InputRenderer:
         if self.has_ledbuffer():
             now = time.monotonic() - self.started
             self.matrix.ledbuffer.set_params(
-                now, snapshot['hue'], snapshot['brightness'])
+                now, snapshot['brightness'])
 
         if snapshot['input_mode'] == 'ndi':
             self.render_ndi(snapshot)
@@ -202,8 +217,8 @@ class InputRenderer:
         if self.quad is None:
             return
 
-        now = time.monotonic() - self.started
-        self.quad.set_params(now, snapshot['hue'])
+        self.quad.set_params(self.effect_time, snapshot['color1'], snapshot['color2'],
+                             snapshot['color3'])
         self.quad.render()
 
     def render_ndi(self, snapshot):
@@ -299,7 +314,7 @@ class InputRenderer:
         else:
             effect = autoplay_effect_ids[0]
 
-        self.state.update(effect=effect, hue=random.random())
+        self.state.update(effect=effect)
         self.failed_effect = None
         self.schedule_autoplay(now=now)
 
@@ -386,6 +401,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.write_json(self.server.app_state.snapshot())
 
     def normalize_state(self, payload):
+        if not isinstance(payload, dict):
+            raise ValueError('Expected an object')
+        if 'hue' in payload:
+            raise ValueError('Hue has been replaced by color1, color2 and color3')
         values = {}
 
         if 'effect' in payload:
@@ -414,8 +433,20 @@ class RequestHandler(BaseHTTPRequestHandler):
             source = payload['ndi_source']
             values['ndi_source'] = None if source is None else str(source)
 
-        if 'hue' in payload:
-            values['hue'] = clamp(float(payload['hue']), 0.0, 1.0)
+        for key in ('color1', 'color2', 'color3'):
+            if key in payload:
+                values[key] = validate_color(payload[key])
+
+        if 'speed' in payload:
+            if isinstance(payload['speed'], bool):
+                raise ValueError('Speed must be a number')
+            try:
+                speed = float(payload['speed'])
+            except (TypeError, ValueError) as e:
+                raise ValueError('Speed must be a number') from e
+            if not math.isfinite(speed):
+                raise ValueError('Speed must be a finite number')
+            values['speed'] = clamp(speed, 0.0, 4.0)
 
         if 'brightness' in payload:
             values['brightness'] = clamp(float(payload['brightness']), 0.0, 1.0)
@@ -528,6 +559,24 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def validate_color(value):
+    """RGB components are finite numbers in [0, 1]; black is a real color."""
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise ValueError('Expected an RGB array with three components')
+    if any(isinstance(component, bool) or
+           not isinstance(component, (int, float)) or
+           not 0.0 <= component <= 1.0 for component in value):
+        raise ValueError('RGB components must be numbers from 0 to 1')
+    return list(value)
+
+
+def parse_color(value):
+    try:
+        return validate_color([float(component) for component in value.split(',')])
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
 def parse_bool(value):
     if isinstance(value, bool):
         return value
@@ -562,8 +611,11 @@ def load_state_file(filename, effect_ids, led_effect_ids):
             raise ValueError('invalid autoplay effects')
         if not isinstance(values['autoplay'], bool):
             raise ValueError('invalid autoplay value')
+        for key in ('color1', 'color2', 'color3'):
+            values[key] = validate_color(values[key])
         for key, low, high in (
-            ('hue', 0.0, 1.0), ('brightness', 0.0, 1.0),
+            ('speed', 0.0, 4.0),
+            ('brightness', 0.0, 1.0),
             ('autoplay_interval', 1.0, 3600.0), ('supersample', 0.0, 16.0),
         ):
             value = values[key]
@@ -604,8 +656,12 @@ def main():
     parser.add_argument('--led-effects-dir', default='led_effects', help='Directory containing per-emitter .frag effects')
     parser.add_argument('--web-dir', default='web', help='Directory containing the web UI')
     parser.add_argument('--effect', default=None, help='Initial effect id')
-    parser.add_argument('--hue', type=float, default=0.0, help='Initial hue value from 0.0 to 1.0')
+    for index, default in enumerate(('0,0,1', '1,1,0', '1,0,0'), start=1):
+        parser.add_argument('--color%d' % index, type=parse_color, default=default,
+                            help='Initial RGB color as R,G,B with components from 0 to 1')
     parser.add_argument('--brightness', type=float, default=1.0, help='Initial brightness from 0.0 to 1.0')
+    parser.add_argument('--speed', type=float, default=1.0,
+                        help='Initial effect speed multiplier from 0.0 to 4.0')
     parser.add_argument('--autoplay', action='store_true', help='Randomly switch effects on the server')
     parser.add_argument('--autoplay-interval', type=float, default=30.0, help='Seconds between autoplay effect switches')
     parser.add_argument('--state-file', default=None,
@@ -625,7 +681,10 @@ def main():
         raise RuntimeError('Unknown effect: %s' % effect)
     initial_state = {
         'effect': effect,
-        'hue': clamp(args.hue, 0.0, 1.0),
+        'color1': args.color1,
+        'color2': args.color2,
+        'color3': args.color3,
+        'speed': clamp(args.speed, 0.0, 4.0),
         'brightness': clamp(args.brightness, 0.0, 1.0),
         'autoplay': args.autoplay,
         'autoplay_interval': clamp(args.autoplay_interval, 1.0, 3600.0),

@@ -1,9 +1,4 @@
-vec3 hueColor(float hue)
-{
-    vec3 p = abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-    return clamp(p - 1.0, 0.0, 1.0);
-}
-
+// Palette: 2 fixed colors. Black renders as black.
 mat2 rotate2d(float angle)
 {
     float c = cos(angle);
@@ -31,11 +26,11 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     float s2 = boxFrame(rotate2d(iTime * 0.88 + 1.05) * (p + vec2(0.12, 0.12)), 0.48, 0.03);
     float s3 = boxFrame(rotate2d(-iTime * 1.1 + 1.65) * p, 0.31, 0.028);
 
-    color += hueColor(iHue + 0.00) * s0;
-    color += hueColor(iHue + 0.18) * s1;
-    color += hueColor(iHue + 0.36) * s2;
-    color += hueColor(iHue + 0.58) * s3;
-    color += vec3(1.0) * (s0 * s1 + s1 * s2 + s2 * s3) * 0.38;
+    color += iColor1 * s0;
+    color += iColor2 * s1;
+    color += iColor1 * s2;
+    color += iColor2 * s3;
+    color *= 1.0 + (s0 * s1 + s1 * s2 + s2 * s3) * 0.38;
 
     float mask = smoothstep(1.35, 0.05, d);
     fragColor = vec4(min(color * mask, vec3(1.0)), 1.0);

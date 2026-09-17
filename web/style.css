@@ -224,6 +224,22 @@ canvas {
   gap: 16px;
 }
 
+.palette-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+input[type="color"] {
+  width: 100%;
+  height: 44px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
 .ndi-panel {
   margin-top: 18px;
   padding: 18px;

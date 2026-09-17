@@ -52,7 +52,8 @@ def test_state_file_persists_user_settings(tmp_path):
 def test_app_state_round_trips_every_persisted_field(tmp_path):
     first_filename = tmp_path / 'first.json'
     first = fbmserve.AppState(
-        'plasma', hue=0.25, brightness=0.4, autoplay=True,
+        'plasma', color1=[0.2, 0.4, 0.8], color2=[1, 0, 0],
+        color3=[0, 0, 0], brightness=0.4, autoplay=True,
         autoplay_interval=17.5, autoplay_effects=['solid', 'plasma'],
         input_mode='ndi', ndi_source='Studio (Camera)',
         led_effect='sparkle', supersample=6.5, state_file=first_filename)

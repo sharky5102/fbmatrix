@@ -1,9 +1,4 @@
-vec3 hueColor(float hue)
-{
-    vec3 p = abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-    return clamp(p - 1.0, 0.0, 1.0);
-}
-
+// Palette: 2 fixed colors. Black renders as black.
 void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
     vec2 uv = fragCoord / iResolution.xy;
@@ -16,6 +11,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     v += sin(length(p + vec2(sin(iTime * 0.31), cos(iTime * 0.27))) * 8.0);
     v = v * 0.125 + 0.5;
 
-    vec3 color = hueColor(iHue + v * 0.35 + uv.x * 0.08);
+    vec3 color = mix(iColor1, iColor2, clamp(v, 0.0, 1.0));
     fragColor = vec4(color * smoothstep(0.05, 1.0, v), 1.0);
 }

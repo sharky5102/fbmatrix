@@ -29,6 +29,7 @@ import assembly.tree
 import fbmatrix
 import led_effect
 import ledlayout
+import shader_effect
 if IS_WINDOWS:
     # Names used by decorators in the skipped Linux-only test class must still
     # exist while unittest collects the module.
@@ -102,6 +103,50 @@ def hub75ToText(data, width):
 def render_solid(color):
     gl.glClearColor(color[0], color[1], color[2], 1)
     gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+
+
+class TestEffectPalette(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.renderer = fbmatrix.renderer(backend=test_backend)
+        cls.screen = fbo.FBO(96, 64)
+
+    def pixels(self, effect, colors, now=1.25):
+        with self.screen:
+            gl.glClearColor(0, 0, 0, 1)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+            effect.set_params(now, *colors)
+            effect.render()
+            data = gl.glReadPixels(0, 0, 96, 64, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE)
+        return np.frombuffer(data, dtype=np.uint8).reshape(64, 96, 4)[:, :, :3]
+
+    def test_all_effects_render_palette_without_fallback_or_white_highlights(self):
+        black = (0, 0, 0)
+        for item in shader_effect.discover_effects('effects'):
+            with self.subTest(effect=item['id']):
+                source = shader_effect.load_effect_source('effects', item['id'])
+                effect = shader_effect.ShaderEffect(source, 96, 64)
+                for now in (1.25, 3.75):
+                    self.assertFalse(self.pixels(effect, [black] * 3, now).any())
+                red = self.pixels(effect, [(0.2, 0, 0)] * 3)
+                self.assertGreater(red[:, :, 0].max(), 0)
+                self.assertFalse(red[:, :, 1:].any())
+
+                for slot in range(3):
+                    colors = [black] * 3
+                    colors[slot] = (0.02, 0, 0)
+                    low = self.pixels(effect, colors).astype(int)
+                    colors[slot] = (0.04, 0, 0)
+                    high = self.pixels(effect, colors).astype(int)
+                    self.assertLessEqual(np.abs(high - low * 2).max(), 2)
+                    used = 'iColor%d' % (slot + 1) in source
+                    self.assertEqual(bool(high.any()), used)
+
+    def test_solid_uses_exact_color1_and_ignores_other_slots(self):
+        effect = shader_effect.ShaderEffect(
+            shader_effect.load_effect_source('effects', 'solid'), 96, 64)
+        pixels = self.pixels(effect, [(0.2, 0.4, 0.6), (1, 0, 0), (0, 1, 0)])
+        self.assertTrue(np.all(np.abs(pixels.astype(int) - [51, 102, 153]) <= 1))
 
 class TestHub75(unittest.TestCase):
     height = 194
@@ -257,7 +302,7 @@ class TestWS2811(unittest.TestCase):
 
         with renderer.mainfbo:
             render_solid((0.8, 0.4, 0.2))
-        renderer.ledbuffer.set_params(0.0, 0.0, 0.5)
+        renderer.ledbuffer.set_params(0.0, 0.5)
 
         with renderer.ledfbo:
             renderer.clear()
@@ -284,7 +329,7 @@ class TestWS2811(unittest.TestCase):
         for effect in led_effect.discover_effects('led_effects'):
             renderer.ledbuffer.set_effect_source(
                 led_effect.load_effect_source('led_effects', effect['id']))
-            renderer.ledbuffer.set_params(1.25, 0.3, 0.8)
+            renderer.ledbuffer.set_params(1.25, 0.8)
 
             while gl.glGetError() != gl.GL_NO_ERROR:
                 pass

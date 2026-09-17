@@ -12,17 +12,16 @@ class ShaderEffect(geometry.base):
         uniform mat4 projection;
 
         in highp vec2 position;
-        in highp vec2 texcoor;
 
         out highp vec2 v_texcoor;
 
         void main()
         {
             gl_Position = projection * modelview * vec4(position, 0.0, 1.0);
-            v_texcoor = texcoor;
+            v_texcoor = position * 0.5 + 0.5;
         } """
 
-    attributes = {'position': 2, 'texcoor': 2}
+    attributes = {'position': 2}
     primitive = gl.GL_QUADS
 
     def __init__(self, source, width, height):
@@ -30,13 +29,12 @@ class ShaderEffect(geometry.base):
         self.width = width
         self.height = height
         self.time = 0.0
-        self.hue = 0.0
+        self.colors = ((0.0, 0.0, 1.0), (1.0, 1.0, 0.0), (1.0, 0.0, 0.0))
         super(ShaderEffect, self).__init__()
 
     def getVertices(self):
         return {
             'position': [(-1, -1), (1, -1), (1, 1), (-1, 1)],
-            'texcoor': [(0, 0), (1, 0), (1, 1), (0, 1)],
         }
 
     def draw(self):
@@ -44,13 +42,14 @@ class ShaderEffect(geometry.base):
         gl.glUniform1f(loc, self.time)
         loc = gl.glGetUniformLocation(self.program, "iResolution")
         gl.glUniform2f(loc, self.width, self.height)
-        loc = gl.glGetUniformLocation(self.program, "iHue")
-        gl.glUniform1f(loc, self.hue)
+        for index, color in enumerate(self.colors, start=1):
+            loc = gl.glGetUniformLocation(self.program, 'iColor%d' % index)
+            gl.glUniform3f(loc, *color)
         super(ShaderEffect, self).draw()
 
-    def set_params(self, now, hue):
+    def set_params(self, now, color1, color2, color3):
         self.time = now
-        self.hue = hue
+        self.colors = (color1, color2, color3)
 
     @staticmethod
     def wrap_source(source):
@@ -63,7 +62,9 @@ class ShaderEffect(geometry.base):
 
             uniform highp float iTime;
             uniform highp vec2 iResolution;
-            uniform highp float iHue;
+            uniform highp vec3 iColor1;
+            uniform highp vec3 iColor2;
+            uniform highp vec3 iColor3;
 
             """ + source + """
 

@@ -3,7 +3,10 @@ const state = {
   led_effects: [],
   effect: null,
   led_effect: 'default',
-  hue: 0,
+  color1: [0, 0, 1],
+  color2: [1, 1, 0],
+  color3: [1, 0, 0],
+  speed: 1,
   brightness: 1,
   supersample: 3,
   autoplay: false,
@@ -21,15 +24,18 @@ const preview = {
   program: null,
   buffer: null,
   effect: null,
-  start: performance.now(),
   error: null,
+  effect_time: 0,
+  last_frame: performance.now(),
 };
 
 const SLIDER_UPDATE_DELAY = 100;
 
 const effectsEl = document.getElementById('effects');
 const ledEffectsEl = document.getElementById('led-effects');
-const hueEl = document.getElementById('hue');
+const colorKeys = ['color1', 'color2', 'color3'];
+const colorEls = colorKeys.map((key) => document.getElementById(key));
+const speedEl = document.getElementById('speed');
 const brightnessEl = document.getElementById('brightness');
 const supersampleEl = document.getElementById('supersample');
 const autoplayEl = document.getElementById('autoplay');
@@ -135,7 +141,10 @@ function renderLedEffects() {
 
 function renderControls() {
   const effectMode = state.input_mode === 'effect';
-  hueEl.value = state.hue;
+  colorEls.forEach((el, index) => {
+    if (document.activeElement !== el) el.value = rgbToHex(state[colorKeys[index]]);
+  });
+  speedEl.value = state.speed;
   brightnessEl.value = state.brightness;
   supersampleEl.value = state.supersample;
   autoplayEl.checked = state.autoplay;
@@ -324,7 +333,9 @@ function wrapFragmentSource(source) {
 
     uniform highp float iTime;
     uniform highp vec2 iResolution;
-    uniform highp float iHue;
+    uniform highp vec3 iColor1;
+    uniform highp vec3 iColor2;
+    uniform highp vec3 iColor3;
     uniform highp float iBrightness;
 
     ${stripVersion(source)}
@@ -379,6 +390,10 @@ function compileShader(type, source) {
 function drawPreview() {
   requestAnimationFrame(drawPreview);
 
+  const frameTime = performance.now();
+  preview.effect_time += (frameTime - preview.last_frame) / 1000 * Number(state.speed);
+  preview.last_frame = frameTime;
+
   const gl = preview.gl;
   if (!gl || !preview.program) {
     return;
@@ -389,9 +404,12 @@ function drawPreview() {
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.useProgram(preview.program);
 
-  setUniform1f('iTime', (performance.now() - preview.start) / 1000);
+  setUniform1f('iTime', preview.effect_time);
   setUniform2f('iResolution', canvas.width, canvas.height);
-  setUniform1f('iHue', Number(state.hue));
+  colorKeys.forEach((key, index) => {
+    const loc = gl.getUniformLocation(preview.program, `iColor${index + 1}`);
+    gl.uniform3fv(loc, state[key]);
+  });
   setUniform1f('iBrightness', Number(state.brightness));
 
   const position = gl.getAttribLocation(preview.program, 'position');
@@ -423,9 +441,28 @@ function setUniform2f(name, x, y) {
   preview.gl.uniform2f(loc, x, y);
 }
 
-const updateHue = debounce((hue) => updateState({ hue }), SLIDER_UPDATE_DELAY);
+function rgbToHex(rgb) {
+  return '#' + rgb.map((value) => Math.round(value * 255).toString(16).padStart(2, '0')).join('');
+}
+
+function hexToRgb(hex) {
+  return [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+}
+
+colorEls.forEach((el, index) => {
+  const key = colorKeys[index];
+  const sendColor = debounce((color) => updateState({ [key]: color }), SLIDER_UPDATE_DELAY);
+  el.addEventListener('input', () => {
+    state[key] = hexToRgb(el.value);
+    sendColor(state[key]);
+  });
+});
 const updateBrightness = debounce(
   (brightness) => updateState({ brightness }),
+  SLIDER_UPDATE_DELAY,
+);
+const updateSpeed = debounce(
+  (speed) => updateState({ speed }),
   SLIDER_UPDATE_DELAY,
 );
 const updateSupersample = debounce(
@@ -433,13 +470,13 @@ const updateSupersample = debounce(
   SLIDER_UPDATE_DELAY,
 );
 
-hueEl.addEventListener('input', () => {
-  state.hue = Number(hueEl.value);
-  updateHue(state.hue);
-});
 brightnessEl.addEventListener('input', () => {
   state.brightness = Number(brightnessEl.value);
   updateBrightness(state.brightness);
+});
+speedEl.addEventListener('input', () => {
+  state.speed = Number(speedEl.value);
+  updateSpeed(state.speed);
 });
 supersampleEl.addEventListener('input', () => {
   state.supersample = Number(supersampleEl.value);

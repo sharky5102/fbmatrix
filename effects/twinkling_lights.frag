@@ -1,9 +1,4 @@
-vec3 hueColor(float hue)
-{
-    vec3 p = abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-    return clamp(p - 1.0, 0.0, 1.0);
-}
-
+// Palette: 2 fixed colors. Black renders as black.
 float hash12(vec2 p)
 {
     vec3 q = fract(vec3(p.xyx) * 0.1031);
@@ -41,7 +36,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
 
             float core = smoothstep(0.15, 0.0, length(delta));
             float rays = smoothstep(0.04, 0.0, min(abs(delta.x), abs(delta.y))) * smoothstep(0.20, 0.0, length(delta));
-            vec3 starColor = mix(vec3(1.0), hueColor(iHue + seed * 0.22), 0.35);
+            vec3 starColor = mix(iColor1, iColor2, step(0.5, seed));
             color += starColor * (core + rays * 0.42) * twinkle;
         }
     }

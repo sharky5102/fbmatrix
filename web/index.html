@@ -36,9 +36,23 @@
 
         <div class="controls">
           <div class="effect-settings" id="effect-settings">
+            <div class="palette-controls">
+              <label>
+                <span>Color 1</span>
+                <input id="color1" type="color" value="#0000ff">
+              </label>
+              <label>
+                <span>Color 2</span>
+                <input id="color2" type="color" value="#ffff00">
+              </label>
+              <label>
+                <span>Color 3</span>
+                <input id="color3" type="color" value="#ff0000">
+              </label>
+            </div>
             <label>
-              <span>Hue</span>
-              <input id="hue" type="range" min="0" max="1" step="0.001" value="0">
+              <span>Speed</span>
+              <input id="speed" type="range" min="0" max="4" step="0.01" value="1">
             </label>
             <label class="check-row">
               <input id="autoplay" type="checkbox">

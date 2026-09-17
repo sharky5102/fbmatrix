@@ -1,9 +1,4 @@
-vec3 hueColor(float hue)
-{
-    vec3 p = abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-    return clamp(p - 1.0, 0.0, 1.0);
-}
-
+// Palette: 2 fixed colors. Black renders as black.
 float burst(vec2 p, vec2 center, float phase, float scale)
 {
     float age = fract(iTime * 0.32 + phase);
@@ -25,13 +20,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     float b3 = burst(p, vec2(-0.12, -0.46), 0.83, 1.05);
 
     vec3 color = vec3(0.0);
-    color += hueColor(iHue + 0.02) * b0;
-    color += hueColor(iHue + 0.23) * b1;
-    color += hueColor(iHue + 0.44) * b2;
-    color += hueColor(iHue + 0.67) * b3;
+    color += iColor1 * b0;
+    color += iColor2 * b1;
+    color += iColor1 * b2;
+    color += iColor2 * b3;
 
     float sparkle = smoothstep(0.96, 1.0, sin((p.x + p.y) * 40.0 + iTime * 9.0));
-    color += vec3(1.0) * sparkle * (b0 + b1 + b2 + b3) * 0.16;
+    color *= 1.0 + sparkle * 0.16;
 
     fragColor = vec4(min(color, vec3(1.0)), 1.0);
 }

@@ -1,9 +1,4 @@
-vec3 hueColor(float hue)
-{
-    vec3 p = abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-    return clamp(p - 1.0, 0.0, 1.0);
-}
-
+// Palette: 3 fixed colors. Black renders as black.
 float barField(vec2 p, float angle, float spacing, float speed, float phase)
 {
     vec2 dir = vec2(cos(angle), sin(angle));
@@ -23,12 +18,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     float c = barField(p, 2.42, 4.5, -0.28, 0.41);
 
     vec3 color = vec3(0.0);
-    color += hueColor(iHue + 0.02) * a;
-    color += hueColor(iHue + 0.27) * b;
-    color += hueColor(iHue + 0.56) * c;
+    color += iColor1 * a;
+    color += iColor2 * b;
+    color += iColor3 * c;
 
     float crossing = a * b + b * c + c * a;
-    color += hueColor(iHue + 0.12) * crossing * 0.65;
+    color *= 1.0 + crossing * 0.65;
     color *= smoothstep(1.42, 0.05, d);
 
     fragColor = vec4(min(color * 1.18, vec3(1.0)), 1.0);
