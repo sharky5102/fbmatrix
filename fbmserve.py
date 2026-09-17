@@ -15,7 +15,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
 import common
-from dmx import DMXReceiver
+if sys.platform != 'win32':
+    from dmx import DMXReceiver
+else:
+    DMXReceiver = None
 import ndi
 import led_effect
 
@@ -730,6 +733,8 @@ def main():
     parser.add_argument('--dmx-hold', type=float, default=30.0,
                         help='Seconds to retain DMX values after signal loss')
     args = parser.parse_args()
+    if sys.platform == 'win32' and args.dmx_start is not None:
+        parser.error('DMX input is not supported on Windows')
     if args.dmx_start is not None and not 1 <= args.dmx_start <= 513 - DMX_CHANNELS:
         parser.error('--dmx-start must be between 1 and %d' % (513 - DMX_CHANNELS))
     if not math.isfinite(args.dmx_hold) or args.dmx_hold < 0:
@@ -771,7 +776,7 @@ def main():
     state = AppState(**initial_state, state_file=args.state_file)
     commands = queue.Queue()
     dmx_receiver = (DMXReceiver(args.dmx_device)
-                    if args.dmx_start is not None else None)
+                    if args.dmx_start is not None and DMXReceiver is not None else None)
 
     ndi_runtime = None
     ndi_discovery = None
