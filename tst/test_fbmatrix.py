@@ -29,6 +29,7 @@ import assembly.tree
 import fbmatrix
 import led_effect
 import ledlayout
+import calibration_protocol
 import shader_effect
 if IS_WINDOWS:
     # Names used by decorators in the skipped Linux-only test class must still
@@ -345,6 +346,42 @@ class TestWS2811(unittest.TestCase):
             self.assertEqual(
                 3 * 2 * 4, len(data),
                 'Unexpected output size for emitter effect %s' % effect['id'])
+
+    def testCalibrationEmitterMatchesPythonPacketEncoder(self):
+        pixels_per_string = 1000
+        layout = [[
+            [pixel, string_id, 0, 1, string_id, pixel / (pixels_per_string - 1)]
+            for pixel in range(pixels_per_string)
+        ] for string_id in (0, 1)]
+        renderer = fbmatrix.renderer(
+            display='ws2811', layout=layout, backend=test_backend)
+        renderer.ledbuffer.set_effect_source(
+            led_effect.load_effect_source('led_effects', 'calibration'))
+
+        for slot in range(calibration_protocol.PACKET_SLOTS):
+            now = (slot + 0.5) * calibration_protocol.SYMBOL_PERIOD_SECONDS
+            renderer.ledbuffer.set_params(now, 1.0)
+            with renderer.ledfbo:
+                renderer.clear()
+                renderer.ledbuffer.render()
+                data = gl.glReadPixels(
+                    0, 0, pixels_per_string, 2,
+                    gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+
+            rendered = np.frombuffer(data, dtype=np.uint8).reshape(
+                2, pixels_per_string, 4)[:, :, :3]
+            for pixel_index in (0, 999):
+                actual = sorted(tuple(int(value) for value in color)
+                                for color in rendered[:, pixel_index, :])
+                expected = sorted(tuple(int(value * 255) for value in
+                                        calibration_protocol.rgb_for_bit(
+                                            calibration_protocol.symbol_bit(
+                                                string_id, pixel_index, now)))
+                                  for string_id in (0, 1))
+                self.assertEqual(
+                    expected, actual,
+                    'GLSL/Python packet mismatch at slot %d pixel %d' %
+                    (slot, pixel_index))
 
     def testOutputHeightUsesLongestString(self):
         layout = [
