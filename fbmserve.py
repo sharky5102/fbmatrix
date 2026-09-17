@@ -15,8 +15,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
 import common
+from dmx import DMXReceiver
 import ndi
 import led_effect
+
+
+DMX_CHANNELS = 12
 
 
 def get_shader_effect():
@@ -153,7 +157,8 @@ class AppState:
 
 class InputRenderer:
     def __init__(self, effects_dir, effects, width, height, state, commands,
-                 ndi_runtime=None, matrix=None, led_effects_dir='led_effects'):
+                 ndi_runtime=None, matrix=None, led_effects_dir='led_effects',
+                 dmx_receiver=None, dmx_start=1, dmx_hold=30.0):
         self.effects_dir = effects_dir
         self.effects = effects
         self.width = width
@@ -176,6 +181,11 @@ class InputRenderer:
         self.led_effects_dir = led_effects_dir
         self.current_led_effect = None
         self.failed_led_effect = None
+        self.dmx_receiver = dmx_receiver
+        self.dmx_start = dmx_start
+        self.dmx_hold = dmx_hold
+        self.dmx_values = None
+        self.last_dmx_frame = None
         self.schedule_autoplay()
 
     def render(self):
@@ -183,6 +193,7 @@ class InputRenderer:
         self.apply_autoplay()
         snapshot = self.state.snapshot()
         tick = time.monotonic()
+        self.apply_dmx(snapshot, tick)
         self.effect_time += (tick - self.last_effect_tick) * snapshot['speed']
         self.last_effect_tick = tick
 
@@ -261,6 +272,21 @@ class InputRenderer:
 
     def close(self):
         self.close_receiver()
+        if self.dmx_receiver is not None:
+            self.dmx_receiver.close()
+
+    def apply_dmx(self, snapshot, now):
+        if self.dmx_receiver is None:
+            return
+        frame = self.dmx_receiver.read_dmx_frame()
+        if frame is not None:
+            values = dmx_values(frame, self.dmx_start, self.effects)
+            if values is not None:
+                self.dmx_values = values
+                self.last_dmx_frame = now
+        if (self.dmx_values is not None and self.last_dmx_frame is not None and
+                now - self.last_dmx_frame <= self.dmx_hold):
+            snapshot.update(self.dmx_values)
 
     def apply_commands(self):
         while True:
@@ -559,6 +585,25 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def dmx_values(frame, start, effects):
+    """Map a zero-start-code DMX frame to fbmserve's 12-channel profile."""
+    if not frame or frame[0] != 0:
+        return None
+    channels = frame[start:start + DMX_CHANNELS]
+    if len(channels) != DMX_CHANNELS or not effects:
+        return None
+    scale = 1.0 / 255.0
+    effect_index = channels[1] * len(effects) // 256
+    return {
+        'brightness': channels[0] * scale,
+        'effect': effects[effect_index]['id'],
+        'speed': channels[2] * scale * 4.0,
+        'color1': [value * scale for value in channels[3:6]],
+        'color2': [value * scale for value in channels[6:9]],
+        'color3': [value * scale for value in channels[9:12]],
+    }
+
+
 def validate_color(value):
     """RGB components are finite numbers in [0, 1]; black is a real color."""
     if not isinstance(value, (list, tuple)) or len(value) != 3:
@@ -666,7 +711,17 @@ def main():
     parser.add_argument('--autoplay-interval', type=float, default=30.0, help='Seconds between autoplay effect switches')
     parser.add_argument('--state-file', default=None,
                         help='Persist server state to this JSON file')
+    parser.add_argument('--dmx-device', default='/dev/dmx-in',
+                        help='DMX input TTY (default: /dev/dmx-in)')
+    parser.add_argument('--dmx-start', type=int, default=None,
+                        help='Enable DMX using this 1-based start address')
+    parser.add_argument('--dmx-hold', type=float, default=30.0,
+                        help='Seconds to retain DMX values after signal loss')
     args = parser.parse_args()
+    if args.dmx_start is not None and not 1 <= args.dmx_start <= 513 - DMX_CHANNELS:
+        parser.error('--dmx-start must be between 1 and %d' % (513 - DMX_CHANNELS))
+    if not math.isfinite(args.dmx_hold) or args.dmx_hold < 0:
+        parser.error('--dmx-hold must be a finite, non-negative number')
     matrix = common.renderer_from_args(args)
 
     effects_dir = os.path.abspath(args.effects_dir)
@@ -703,6 +758,8 @@ def main():
             initial_state.update(saved)
     state = AppState(**initial_state, state_file=args.state_file)
     commands = queue.Queue()
+    dmx_receiver = (DMXReceiver(args.dmx_device)
+                    if args.dmx_start is not None else None)
 
     ndi_runtime = None
     ndi_discovery = None
@@ -722,7 +779,8 @@ def main():
 
     renderer = InputRenderer(effects_dir, effects, matrix.source_columns, matrix.source_rows,
                              state, commands, ndi_runtime, matrix,
-                             led_effects_dir)
+                             led_effects_dir, dmx_receiver, args.dmx_start or 1,
+                             args.dmx_hold)
     try:
         matrix.run(renderer.render)
     finally:

@@ -358,6 +358,29 @@ Effect speed is a multiplier from 0 to 4, defaults to 1, and is exposed as
 generated animation. Speed changes preserve animation phase; they do not affect
 NDI playback, autoplay intervals, or emitter-shader timing.
 
+`fbmserve.py` can overlay these controls from DMX by passing a one-based start
+address. It reads `/dev/dmx-in` by default; use `--dmx-device` to select another
+TTY:
+
+```bash
+./fbmserve.py --dmx-start 1
+```
+
+DMX input explicitly supports FTDI FT232R-based USB-to-RS-485 interfaces using
+Linux's `ftdi_sio` driver. Frame BREAKs are detected through the TTY `PARMRK`
+facility. Configure a stable `/dev/dmx-in` udev symlink for the interface, or
+pass its `/dev/serial/by-id/...` path with `--dmx-device`.
+
+The 12-channel DMX profile is brightness, effect, speed, Color 1 RGB, Color 2
+RGB, and Color 3 RGB. Brightness and RGB components map 0–255 to 0–1. Speed maps
+0–255 to 0–4, and the effect channel divides its range evenly over the effects
+sorted by ID. DMX is polled once per rendered frame and overrides the equivalent
+web settings without changing or persisting them. The last valid DMX values
+remain active for 30 seconds after frames stop, configurable with `--dmx-hold`,
+before control returns to the web settings. Input mode and NDI source remain web
+settings. In NDI mode only the DMX brightness control affects the rendered
+output; effect, speed, and palette values are retained but unused.
+
 `GET /api/state` returns `color1`, `color2`, and `color3` as RGB arrays with
 three numeric components from 0 to 1. `POST /api/state` accepts partial updates,
 for example:
