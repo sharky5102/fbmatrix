@@ -328,7 +328,7 @@ the browser UI is closed.
 Pass `--state-file /path/to/fbmserve-state.json` to preserve user-controlled
 settings across restarts, including the selected NDI source and input mode.
 Persistence is disabled when this option is omitted. State is replaced
-atomically after changes; an unreadable, corrupt, or obsolete state file is
+atomically and synced to durable storage after changes; an unreadable, corrupt, or obsolete state file is
 ignored and replaced with the command-line defaults. A saved NDI source does
 not need to be visible during startup: the receiver keeps trying that source
 so it can connect when the source comes online.

@@ -23,6 +23,14 @@ import led_effect
 DMX_CHANNELS = 12
 
 
+def fsync_directory(directory):
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def get_shader_effect():
     # shader_effect imports OpenGL, so load it only after command-line backend
     # selection has configured PyOpenGL.
@@ -145,6 +153,10 @@ class AppState:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(temporary, self.state_file)
+            # fsyncing the file makes its contents durable; fsyncing the
+            # directory makes the rename durable as well.  Both are needed to
+            # survive power loss without reverting to or losing the snapshot.
+            fsync_directory(directory)
         except OSError as e:
             print('Unable to save state to %s: %s' %
                   (self.state_file, e), file=sys.stderr)

@@ -49,6 +49,40 @@ def test_state_file_persists_user_settings(tmp_path):
     assert 'ndi_status' not in json.loads(filename.read_text())
 
 
+def test_state_file_syncs_contents_and_parent_directory(tmp_path, monkeypatch):
+    events = []
+    real_fsync = fbmserve.os.fsync
+    real_replace = fbmserve.os.replace
+
+    def fsync(fd):
+        events.append('file-fsync')
+        real_fsync(fd)
+
+    def replace(source, destination):
+        events.append('replace')
+        real_replace(source, destination)
+
+    monkeypatch.setattr(fbmserve.os, 'fsync', fsync)
+    monkeypatch.setattr(fbmserve.os, 'replace', replace)
+    monkeypatch.setattr(fbmserve, 'fsync_directory',
+                        lambda directory: events.append('directory-fsync'))
+    fbmserve.AppState('solid', state_file=tmp_path / 'state.json')
+
+    assert events == ['file-fsync', 'replace', 'directory-fsync']
+
+
+def test_fsync_directory_opens_syncs_and_closes_directory():
+    with mock.patch.object(fbmserve.os, 'open', return_value=42) as open_mock, \
+            mock.patch.object(fbmserve.os, 'fsync') as fsync_mock, \
+            mock.patch.object(fbmserve.os, 'close') as close_mock:
+        fbmserve.fsync_directory('/state')
+
+    open_mock.assert_called_once_with(
+        '/state', fbmserve.os.O_RDONLY | fbmserve.os.O_DIRECTORY)
+    fsync_mock.assert_called_once_with(42)
+    close_mock.assert_called_once_with(42)
+
+
 def test_app_state_round_trips_every_persisted_field(tmp_path):
     first_filename = tmp_path / 'first.json'
     first = fbmserve.AppState(
