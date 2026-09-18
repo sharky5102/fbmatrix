@@ -67,7 +67,7 @@ def renderer_from_args(args):
         source_columns = args.source_columns or max(1, int(args.columns * args.source_scale))
         source_rows = args.source_rows or max(1, int(args.rows * args.source_scale))
 
-    if args.emulate or args.preview or args.raw:
+    if sys.platform == 'win32' or args.emulate or args.preview or args.raw:
         from glut import GLUTDisplay
         backend = GLUTDisplay()
     else:

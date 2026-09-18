@@ -8,7 +8,7 @@ float hash11(float p)
 
 void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex,
              in float stringIndex, in float enabled, in float lineIndex,
-             in float linePosition)
+             in float linePosition, in float globalLedIndex)
 {
     vec4 source = sampleSource(ledPosition);
     float emitter = ledIndex + stringIndex * 4099.0;

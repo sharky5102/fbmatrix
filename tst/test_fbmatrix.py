@@ -279,7 +279,7 @@ class TestWS2811(unittest.TestCase):
             void mainLed(out vec4 ledColor, in vec3 ledPosition,
                          in float ledIndex, in float stringIndex,
                          in float enabled, in float lineIndex,
-                         in float linePosition) {
+                         in float linePosition, in float globalLedIndex) {
                 ledColor = vec4(linePosition, lineIndex, stringIndex, 1.0);
             }
         """)
@@ -356,14 +356,40 @@ class TestWS2811(unittest.TestCase):
         renderer = fbmatrix.renderer(
             display='ws2811', layout=layout, backend=test_backend)
         renderer.ledbuffer.set_effect_source(
-            led_effect.load_effect_source('led_effects', 'calibration'))
-
-        for slot in range(calibration_protocol.PACKET_SLOTS):
+            led_effect.load_effect_source('led_effects', 'calibration'),
+            effect_id='calibration')
+        gl.glBindTexture(gl.GL_TEXTURE_2D,
+                         renderer.ledbuffer.codebook_texture)
+        self.assertEqual(0, int(gl.glGetTexParameteriv(
+            gl.GL_TEXTURE_2D, gl.GL_TEXTURE_BASE_LEVEL)))
+        self.assertEqual(0, int(gl.glGetTexParameteriv(
+            gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAX_LEVEL)))
+        self.assertEqual(gl.GL_NEAREST, int(gl.glGetTexParameteriv(
+            gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER)))
+        self.assertEqual(256, int(gl.glGetTexLevelParameteriv(
+            gl.GL_TEXTURE_2D, 0, gl.GL_TEXTURE_WIDTH)))
+        self.assertEqual(32, int(gl.glGetTexLevelParameteriv(
+            gl.GL_TEXTURE_2D, 0, gl.GL_TEXTURE_HEIGHT)))
+        uploaded = gl.glGetTexImage(gl.GL_TEXTURE_2D, 0,
+                                    gl.GL_RED_INTEGER, gl.GL_UNSIGNED_INT)
+        self.assertEqual(calibration_protocol.load_codebook()[0],
+                         int(np.frombuffer(uploaded, dtype=np.uint32)[0]))
+        words = calibration_protocol.load_codebook()
+        for slot in range(calibration_protocol.CODEWORD_BITS):
             now = (slot + 0.5) * calibration_protocol.SYMBOL_PERIOD_SECONDS
             renderer.ledbuffer.set_params(now, 1.0)
             with renderer.ledfbo:
                 renderer.clear()
                 renderer.ledbuffer.render()
+                sampler_location = gl.glGetUniformLocation(
+                    renderer.ledbuffer.program, 'codebooktex')
+                sampler_unit = np.zeros(1, dtype=np.int32)
+                gl.glGetUniformiv(renderer.ledbuffer.program,
+                                  sampler_location, sampler_unit)
+                self.assertEqual(3, int(sampler_unit[0]))
+                gl.glActiveTexture(gl.GL_TEXTURE3)
+                self.assertEqual(renderer.ledbuffer.codebook_texture, int(
+                    gl.glGetIntegerv(gl.GL_TEXTURE_BINDING_2D)))
                 data = gl.glReadPixels(
                     0, 0, pixels_per_string, 2,
                     gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
@@ -376,11 +402,12 @@ class TestWS2811(unittest.TestCase):
                 expected = sorted(tuple(int(value * 255) for value in
                                         calibration_protocol.rgb_for_bit(
                                             calibration_protocol.symbol_bit(
-                                                string_id, pixel_index, now)))
+                                                words[string_id * pixels_per_string
+                                                      + pixel_index], now)))
                                   for string_id in (0, 1))
                 self.assertEqual(
                     expected, actual,
-                    'GLSL/Python packet mismatch at slot %d pixel %d' %
+                    'GLSL/Python codebook mismatch at slot %d pixel %d' %
                     (slot, pixel_index))
 
     def testOutputHeightUsesLongestString(self):

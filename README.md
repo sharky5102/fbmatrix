@@ -425,10 +425,11 @@ per string and one column per LED, and shaders use this entry point:
 
     void mainLed(out vec4 ledColor, in vec3 ledPosition, in float ledIndex,
                  in float stringIndex, in float enabled, in float lineIndex,
-                 in float linePosition)
+                 in float linePosition, in float globalLedIndex)
 
 `ledIndex` is the LED's column within its string. `lineIndex` identifies its
 logical row, spoke or run, while `linePosition` gives its normalized geometric
-position on that line. The shader can call `sampleSource(ledPosition)` or
-ignore the source framebuffer. The renderer forces disabled LEDs black after
-the shader returns.
+position on that line. `globalLedIndex` is the LED's zero-based position in
+wire order across all strings. The shader can call `sampleSource(ledPosition)`
+or ignore the source framebuffer. The renderer forces disabled LEDs black
+after the shader returns.

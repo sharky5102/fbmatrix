@@ -4,6 +4,7 @@ import numpy as np
 import geometry
 import led_effect
 import ledlayout
+import calibration_protocol
 
 
 class ledbuffer(geometry.base):
@@ -20,9 +21,12 @@ class ledbuffer(geometry.base):
 
     fragment_template = """
         precision highp float;
+        precision highp int;
+        precision highp usampler2D;
         uniform sampler2D tex;
         uniform sampler2D lamptex0;
         uniform sampler2D lamptex1;
+        uniform usampler2D codebooktex;
         uniform ivec2 led_dimensions;
         uniform highp vec4 source_bounds;
         uniform highp float supersample;
@@ -54,7 +58,7 @@ class ledbuffer(geometry.base):
             }
             highp vec4 ledColor;
             mainLed(ledColor, lamp0.xyz, float(emitter.x), float(emitter.y),
-                    lamp0.w, lamp1.x, lamp1.y);
+                    lamp0.w, lamp1.x, lamp1.y, lamp1.z);
             if (lamp0.w <= 0.0)
                 ledColor = vec4(0.0, 0.0, 0.0, 1.0);
             f_color = vec4(
@@ -73,6 +77,7 @@ class ledbuffer(geometry.base):
         self.tex = 0
         self.time = 0.0
         self.brightness = 1.0
+        self.codebook_texture = 0
         self.set_effect_source(effect_source or led_effect.DEFAULT_LED_EFFECT,
                                compile_program=False)
 
@@ -82,10 +87,14 @@ class ledbuffer(geometry.base):
         # physical emitter. Zero enabled remains a real but inactive LED.
         data0[:, :, 3] = -1
         self.source_bounds = ledlayout.active_xy_bounds(self.strings)
+        global_index = 0
         for string_index, string in enumerate(self.strings):
             for led_index, lamp in enumerate(string):
                 data0[string_index, led_index] = lamp[:4]
                 data1[string_index, led_index, :2] = lamp[4:6]
+                data1[string_index, led_index, 2] = global_index
+                global_index += 1
+        self.total_leds = global_index
 
         self.lamptex = gl.glGenTextures(2)
         for texture, data in zip(self.lamptex, (data0, data1)):
@@ -116,6 +125,10 @@ class ledbuffer(geometry.base):
         gl.glActiveTexture(gl.GL_TEXTURE2)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.lamptex[1])
         gl.glUniform1i(gl.glGetUniformLocation(self.program, 'lamptex1'), 2)
+        if self.codebook_texture:
+            gl.glUniform1i(gl.glGetUniformLocation(self.program, 'codebooktex'), 3)
+            gl.glActiveTexture(gl.GL_TEXTURE3)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, self.codebook_texture)
         gl.glUniform2i(gl.glGetUniformLocation(self.program, 'led_dimensions'),
                        self.width, self.height)
         min_x, max_x, min_y, max_y = self.source_bounds
@@ -135,9 +148,36 @@ class ledbuffer(geometry.base):
         self.time = now
         self.brightness = brightness
 
-    def set_effect_source(self, source, compile_program=True):
+    def set_effect_source(self, source, compile_program=True, effect_id=None):
+        if effect_id == 'calibration':
+            self._load_codebook_texture()
+            if self.total_leds > self.codebook_size:
+                raise ValueError(
+                    'Calibration codebook has %d entries but layout has %d LEDs' %
+                    (self.codebook_size, self.total_leds))
         source = led_effect.strip_version(source)
         self.fragment_code = self.fragment_template.replace(
             'LED_EFFECT_SOURCE', source)
         if compile_program:
             self.program = self.loadShaderProgram()
+
+    def _load_codebook_texture(self):
+        if self.codebook_texture:
+            return
+        words = calibration_protocol.load_codebook()
+        self.codebook_size = len(words)
+        texture_width = 256
+        texture_height = (self.codebook_size + texture_width - 1) // texture_width
+        values = np.zeros((texture_height, texture_width), dtype=np.uint32)
+        values.flat[:self.codebook_size] = words
+        self.codebook_texture = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.codebook_texture)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER,
+                           gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER,
+                           gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_BASE_LEVEL, 0)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAX_LEVEL, 0)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_R32UI, texture_width,
+                        texture_height, 0, gl.GL_RED_INTEGER,
+                        gl.GL_UNSIGNED_INT, values)

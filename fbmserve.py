@@ -375,7 +375,7 @@ class InputRenderer:
     def load_led_effect(self, effect_id):
         source = led_effect.load_effect_source(
             self.led_effects_dir, effect_id)
-        self.matrix.ledbuffer.set_effect_source(source)
+        self.matrix.ledbuffer.set_effect_source(source, effect_id=effect_id)
         self.current_led_effect = effect_id
         self.failed_led_effect = None
         self.state.update(error=None)
