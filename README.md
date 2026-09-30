@@ -459,8 +459,11 @@ unspecified channels unchanged. Pixels start black on activation/reconfiguration
 and retain their last values on signal loss. Packets are applied in arrival
 order, without sequence filtering or merging between senders.
 
-This first implementation supports ArtDmx input only; ArtSync is ignored and
-sACN is not implemented. Packet validation follows the
+ArtDmx packets update the staging buffer while ArtSync is active; each valid
+ArtSync publishes the staged frame. If no matching ArtSync arrives for four
+seconds, ArtDmx updates become immediate until synchronization resumes. ArtSync
+packets from an IP other than the latest ArtDmx sender are ignored. sACN is not
+implemented. Packet validation follows the
 [Art-Net specification](https://art-net.org.uk/downloads/art-net.pdf).
 
 

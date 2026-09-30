@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 PORT = 6454
 ARTNET_ID = b'Art-Net\x00'
 OP_DMX = 0x5000
+OP_SYNC = 0x5200
 MIN_PROTOCOL_VERSION = 14
 DMX_HEADER_SIZE = 18
 MAX_DMX_CHANNELS = 512
@@ -48,13 +49,16 @@ class PixelBuffer:
         self.size = size
         self.start_universe = start_universe
         self.pixels = bytearray(size * size * 3)
+        self.staging_pixels = None
         self.lock = threading.Lock()
         self.packets = 0
         self.last_packet = None
         self.error = None
         self.diagnostics = Counter()
+        self.last_sync = None
+        self.last_dmx_source = None
 
-    def update(self, packet):
+    def update(self, packet, source=None):
         # ArtDmx's fixed header (byte offsets, end exclusive):
         #   0:8   ID: ASCII "Art-Net" followed by a NUL
         #   8:10  OpCode: 0x5000 for ArtDmx, LITTLE endian
@@ -65,19 +69,43 @@ class PixelBuffer:
         #  16:18  Length: number of DMX channel bytes, BIG endian
         #  18:    Data: channel 1 onward, with no DMX start-code byte
         # The mixed byte order is intentional in the Art-Net specification.
-        if len(packet) < DMX_HEADER_SIZE:
+        if len(packet) < 12:
             return self._reject('short_header')
         identifier = packet[:8]
         opcode = int.from_bytes(packet[8:10], 'little')
         version = int.from_bytes(packet[10:12], 'big')
         if identifier != ARTNET_ID:
             return self._reject('invalid_id')
-        if opcode != OP_DMX:
+        if opcode not in (OP_DMX, OP_SYNC):
             return self._reject('other_opcode')
         if version < MIN_PROTOCOL_VERSION:
             return self._reject('old_version')
+        if opcode == OP_SYNC:
+            # ArtSync is ID + opcode + protocol version + two auxiliary bytes.
+            if len(packet) < 14:
+                return self._reject('short_sync')
+            with self.lock:
+                # Art-Net requires ArtSync to come from the most recent ArtDmx
+                # sender. Ignore unrelated controllers on the same network.
+                if self.last_dmx_source is not None and source != self.last_dmx_source:
+                    self.diagnostics['sync_source_mismatch'] += 1
+                    return False
+                now = time.monotonic()
+                if self.last_sync is None or now - self.last_sync >= 4.0:
+                    self.staging_pixels = bytearray(self.pixels)
+                else:
+                    self.pixels, self.staging_pixels = self.staging_pixels, self.pixels
+                    # Keep unchanged universes/pixels for the next partial frame.
+                    self.staging_pixels[:] = self.pixels
+                self.last_sync = now
+                self.diagnostics['sync'] += 1
+            return True
+        if opcode != OP_DMX:
+            return self._reject('other_opcode')
+        if len(packet) < DMX_HEADER_SIZE:
+            return self._reject('short_header')
         # Apply packets in arrival order, ignoring Sequence and Physical.
-        # Only ArtDmx reaches here; ArtSync and other opcodes are ignored.
+        # ArtDmx is applied immediately until the first ArtSync arrives.
         # Port-Address packs Net (7 bits), Sub-Net (4) and Universe (4) into
         # a zero-based 15-bit address. The configured range rejects bit 15.
         universe = int.from_bytes(packet[14:16], 'little')
@@ -102,10 +130,21 @@ class PixelBuffer:
         capacity = first_capacity if universe_offset == 0 else self.channels_per_universe
         count = min(max(0, length - channel_offset), capacity, len(self.pixels) - offset)
         with self.lock:
-            self.pixels[offset:offset + count] = packet[DMX_HEADER_SIZE + channel_offset:DMX_HEADER_SIZE + channel_offset + count]
+            # Art-Net returns to immediate mode after four seconds without sync.
+            # Start the next synchronized frame from the last displayed pixels,
+            # so universes omitted from a partial update retain their values.
+            if self.last_sync is not None and time.monotonic() - self.last_sync < 4.0:
+                target = self.staging_pixels
+            else:
+                target = self.pixels
+                self.last_sync = None
+                self.staging_pixels = None
+            target[offset:offset + count] = packet[DMX_HEADER_SIZE + channel_offset:DMX_HEADER_SIZE + channel_offset + count]
             self.packets += 1
             self.diagnostics['accepted'] += 1
             self.last_packet = time.monotonic()
+            if source is not None:
+                self.last_dmx_source = source
         return True
 
     def _reject(self, reason):
@@ -154,7 +193,7 @@ class Receiver(PixelBuffer):
                     with self.lock:
                         self.error = str(error)
                 return
-            accepted = self.update(packet)
+            accepted = self.update(packet, source=sender[0])
             if logger.isEnabledFor(logging.DEBUG):
                 self.last_datagram = 'sender=%s:%d bytes=%d accepted=%s' % (*sender, len(packet), accepted)
                 if len(packet) >= DMX_HEADER_SIZE and packet[:8] == ARTNET_ID:
@@ -168,6 +207,8 @@ class Receiver(PixelBuffer):
                         data = packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length]
                         self.last_datagram += ' universe=%d length=%d nonzero=%d first12=%s' % (
                             universe, length, sum(value != 0 for value in data), list(data[:12]))
+                    elif opcode == OP_SYNC:
+                        self.last_datagram += ' ArtSync'
                 self._debug_report()
 
     def _debug_report(self):
