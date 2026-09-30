@@ -72,13 +72,14 @@ def test_state_file_syncs_contents_and_parent_directory(tmp_path, monkeypatch):
 
 
 def test_fsync_directory_opens_syncs_and_closes_directory():
-    with mock.patch.object(fbmserve.os, 'open', return_value=42) as open_mock, \
+    with mock.patch.object(fbmserve.os, 'O_DIRECTORY', 0x10000, create=True), \
+            mock.patch.object(fbmserve.os, 'open', return_value=42) as open_mock, \
             mock.patch.object(fbmserve.os, 'fsync') as fsync_mock, \
             mock.patch.object(fbmserve.os, 'close') as close_mock:
         fbmserve.fsync_directory('/state')
 
     open_mock.assert_called_once_with(
-        '/state', fbmserve.os.O_RDONLY | fbmserve.os.O_DIRECTORY)
+        '/state', fbmserve.os.O_RDONLY | 0x10000)
     fsync_mock.assert_called_once_with(42)
     close_mock.assert_called_once_with(42)
 
@@ -110,7 +111,7 @@ def test_every_app_state_field_has_a_serialization_policy(tmp_path):
         item.name for item in dataclasses.fields(fbmserve.AppState)
         if not item.metadata.get('persist', True)
     }
-    assert transient == {'error', 'ndi_status', 'state_file', 'lock'}
+    assert transient == {'error', 'ndi_status', 'matrix_status', 'state_file', 'lock'}
 
     filename = tmp_path / 'state.json'
     state = fbmserve.AppState('solid', state_file=filename)

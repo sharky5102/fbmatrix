@@ -433,3 +433,43 @@ position on that line. `globalLedIndex` is the LED's zero-based position in
 wire order across all strings. The shader can call `sampleSource(ledPosition)`
 or ignore the source framebuffer. The renderer forces disabled LEDs black
 after the shader returns.
+
+
+### Network Matrix (ArtNet)
+
+Select **Network Matrix** in the web UI, choose 16x16, 32x32 or 64x64,
+and set the starting universe (displayed from 1, default 1). The UI number follows QLC+; Art-Net Port-Addresses are zero-based on the wire. Set the one-based starting DMX address within the first universe (default 1). Settings are saved when
+`--state-file` is enabled. The receiver listens on all IPv4 interfaces on UDP
+6454 while this mode is active. Configure the sender to unicast to the server's
+IP address; ArtPoll discovery is not implemented.
+
+Send RGB channels in row order, left to right and top to bottom. Select
+**Channels per universe** to match the sender:
+
+- **510** (default): 170 complete RGB pixels per universe; channels 511-512
+  are ignored. The three matrix sizes require 2, 7 or 25 universes.
+- **512**: all channels are packed continuously, allowing an RGB pixel
+  to span two universes. The three matrix sizes require 2, 6 or 24 universes.
+
+Changing packing restarts reception with a black buffer. The choice is saved
+with the other matrix settings; older saved configurations default to 510. Each ArtDmx packet immediately
+updates its portion of the pixel buffer; one buffer snapshot is uploaded and
+blitted to the existing 2D framebuffer per render frame. Partial packets leave
+unspecified channels unchanged. Pixels start black on activation/reconfiguration
+and retain their last values on signal loss. Packets are applied in arrival
+order, without sequence filtering or merging between senders.
+
+This first implementation supports ArtDmx input only; ArtSync is ignored and
+sACN is not implemented. Packet validation follows the
+[Art-Net specification](https://art-net.org.uk/downloads/art-net.pdf).
+
+
+For a blank Network Matrix display, add `--artnet-debug` to the `fbmserve.py`
+command. Once per second, stderr reports packet acceptance/rejection totals,
+observed zero-based universes, the last sender and packet's first 12 channels,
+and nonzero channel counts in both the receive buffer and the rendered buffer.
+It also reports output brightness and the active LED effect. Rejection totals
+such as `outside_universe_range` indicate a patch mismatch; accepted all-zero
+data indicates that the sender is sending black. Nonzero rendered data narrows
+the investigation to the framebuffer/output path. Without the flag, these
+messages are disabled.

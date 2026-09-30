@@ -2,6 +2,7 @@
 import argparse
 import dataclasses
 import json
+import logging
 import math
 import mimetypes
 import os
@@ -20,6 +21,7 @@ if sys.platform != 'win32':
 else:
     DMXReceiver = None
 import ndi
+import artnet
 import led_effect
 
 
@@ -27,6 +29,9 @@ DMX_CHANNELS = 12
 
 
 def fsync_directory(directory):
+    # Windows cannot open directories for fsync; the file itself is still synced.
+    if not hasattr(os, 'O_DIRECTORY'):
+        return
     directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(directory_fd)
@@ -56,6 +61,11 @@ class AppState:
     autoplay_effects: list
     input_mode: str
     ndi_source: str | None
+    matrix_size: int
+    matrix_channels_per_universe: int
+    matrix_start_address: int
+    matrix_start_universe: int
+    matrix_status: dict = dataclasses.field(metadata={'persist': False})
     led_effect: str
     supersample: float
     ndi_status: dict = dataclasses.field(metadata={'persist': False})
@@ -83,6 +93,10 @@ class AppState:
         supersample=3.0,
         state_file=None,
         led_effect=None,
+        matrix_size=16,
+        matrix_start_universe=0,
+        matrix_channels_per_universe=510,
+        matrix_start_address=1,
     ):
         self.lock = threading.Lock()
         self.effect = effect
@@ -96,6 +110,12 @@ class AppState:
         self.autoplay_effects = autoplay_effects or []
         self.input_mode = input_mode
         self.ndi_source = ndi_source
+        artnet.validate_config(matrix_size, matrix_start_universe, matrix_channels_per_universe, matrix_start_address)
+        self.matrix_channels_per_universe = matrix_channels_per_universe
+        self.matrix_start_address = matrix_start_address
+        self.matrix_size = matrix_size
+        self.matrix_start_universe = matrix_start_universe
+        self.matrix_status = {}
         self.ndi_status = ndi_status or {}
         self.led_effect = led_effect_id if led_effect is None else led_effect
         self.supersample = supersample
@@ -191,6 +211,10 @@ class InputRenderer:
         self.ndi_receiver = None
         self.current_ndi_source = None
         self.ndi_quad = None
+        self.network_receiver = None
+        self.network_config = None
+        self.network_quad = None
+        self.next_network_debug = 0.0
         self.next_ndi_status = 0.0
         self.matrix = matrix
         self.led_effects_dir = led_effects_dir
@@ -228,6 +252,13 @@ class InputRenderer:
             now = time.monotonic() - self.started
             self.matrix.ledbuffer.set_params(
                 now, snapshot['brightness'])
+
+        if snapshot['input_mode'] != 'network_matrix':
+            self.close_network_receiver()
+        if snapshot['input_mode'] == 'network_matrix':
+            self.close_receiver()
+            self.render_network_matrix(snapshot)
+            return
 
         if snapshot['input_mode'] == 'ndi':
             self.render_ndi(snapshot)
@@ -278,6 +309,40 @@ class InputRenderer:
         except RuntimeError as e:
             self.state.update(error=str(e))
 
+    def render_network_matrix(self, snapshot):
+        config = (snapshot['matrix_size'], snapshot['matrix_start_universe'],
+                  snapshot['matrix_channels_per_universe'], snapshot['matrix_start_address'])
+        try:
+            if config != self.network_config:
+                self.close_network_receiver()
+                if self.network_quad is None:
+                    from assembly.network_matrix import NetworkMatrixQuad
+                    self.network_quad = NetworkMatrixQuad()
+                self.network_receiver = artnet.Receiver(config[0], config[1], channels_per_universe=config[2],
+                                                start_address=config[3])
+                self.network_config = config
+                self.state.update(error=None)
+            pixels, status = self.network_receiver.snapshot()
+            self.network_quad.setRGB(pixels, config[0], config[0])
+            self.network_quad.render()
+            if artnet.logger.isEnabledFor(logging.DEBUG) and time.monotonic() >= self.next_network_debug:
+                self.next_network_debug = time.monotonic() + 1.0
+                artnet.logger.debug('Rendered RGB buffer %dx%d to framebuffer %dx%d; '
+                                    'nonzero=%d/%d peak=%d brightness=%.3f LED effect=%s',
+                                    config[0], config[0], self.width, self.height,
+                                    sum(value != 0 for value in pixels), len(pixels), max(pixels),
+                                    snapshot['brightness'], snapshot['led_effect'])
+            self.state.update(matrix_status=status, error=status['error'])
+        except (OSError, RuntimeError) as error:
+            self.state.update(error='ArtNet: %s' % error)
+
+    def close_network_receiver(self):
+        if self.network_receiver is not None:
+            self.network_receiver.close()
+            self.network_receiver = None
+            self.network_config = None
+            self.state.update(matrix_status={})
+
     def close_receiver(self):
         if self.ndi_receiver is not None:
             self.ndi_receiver.close()
@@ -286,6 +351,7 @@ class InputRenderer:
         self.state.update(ndi_status={})
 
     def close(self):
+        self.close_network_receiver()
         self.close_receiver()
         if self.dmx_receiver is not None:
             self.dmx_receiver.close()
@@ -319,8 +385,9 @@ class InputRenderer:
                     'autoplay_effects',
                 )):
                     self.schedule_autoplay()
-                if command['values'].get('input_mode') == 'effect':
+                if 'input_mode' in command['values']:
                     self.close_receiver()
+                    self.close_network_receiver()
                     self.state.update(error=None)
                 if 'effect' in command['values'] and command['values']['effect'] != self.failed_effect:
                     self.failed_effect = None
@@ -466,9 +533,21 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if 'input_mode' in payload:
             mode = str(payload['input_mode'])
-            if mode not in ('effect', 'ndi'):
+            if mode not in ('effect', 'ndi', 'network_matrix'):
                 raise ValueError('Unknown input mode')
             values['input_mode'] = mode
+
+        if any(key in payload for key in (
+                'matrix_size', 'matrix_start_universe', 'matrix_channels_per_universe',
+                'matrix_start_address')):
+            current = self.server.app_state.snapshot()
+            size = payload.get('matrix_size', current['matrix_size'])
+            start = payload.get('matrix_start_universe', current['matrix_start_universe'])
+            channels = payload.get('matrix_channels_per_universe', current['matrix_channels_per_universe'])
+            address = payload.get('matrix_start_address', current['matrix_start_address'])
+            artnet.validate_config(size, start, channels, address)
+            values.update(matrix_size=size, matrix_start_universe=start,
+                          matrix_channels_per_universe=channels, matrix_start_address=address)
 
         if 'ndi_source' in payload:
             source = payload['ndi_source']
@@ -655,13 +734,20 @@ def load_state_file(filename, effect_ids, led_effect_ids):
             values = json.load(f)
         if not isinstance(values, dict):
             raise ValueError('expected an object')
+        # Migrate snapshots saved before Network Matrix was added.
+        values.setdefault('matrix_size', 16)
+        values.setdefault('matrix_start_universe', 0)
+        values.setdefault('matrix_channels_per_universe', 510)
+        values.setdefault('matrix_start_address', 1)
+        artnet.validate_config(values['matrix_size'], values['matrix_start_universe'],
+                               values['matrix_channels_per_universe'], values['matrix_start_address'])
         if set(values) != set(AppState.persisted_keys()):
             raise ValueError('unexpected or missing fields')
         if values['effect'] not in effect_ids:
             raise ValueError('unknown effect')
         if values['led_effect'] not in led_effect_ids:
             raise ValueError('unknown LED effect')
-        if values['input_mode'] not in ('effect', 'ndi'):
+        if values['input_mode'] not in ('effect', 'ndi', 'network_matrix'):
             raise ValueError('unknown input mode')
         if values['ndi_source'] is not None and not isinstance(values['ndi_source'], str):
             raise ValueError('invalid NDI source')
@@ -732,7 +818,13 @@ def main():
                         help='Enable DMX using this 1-based start address')
     parser.add_argument('--dmx-hold', type=float, default=30.0,
                         help='Seconds to retain DMX values after signal loss')
+    parser.add_argument('--artnet-debug', action='store_true',
+                        help='Log ArtNet reception and framebuffer diagnostics once per second')
     args = parser.parse_args()
+    if args.artnet_debug:
+        logging.basicConfig(level=logging.WARNING,
+                            format='%(asctime)s %(name)s: %(message)s')
+        artnet.logger.setLevel(logging.DEBUG)
     if sys.platform == 'win32' and args.dmx_start is not None:
         parser.error('DMX input is not supported on Windows')
     if args.dmx_start is not None and not 1 <= args.dmx_start <= 513 - DMX_CHANNELS:

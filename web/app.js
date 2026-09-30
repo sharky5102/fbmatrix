@@ -17,6 +17,11 @@ const state = {
   ndi_source: null,
   ndi_sources: [],
   ndi_status: {},
+  matrix_size: 16,
+  matrix_channels_per_universe: 510,
+  matrix_start_address: 1,
+  matrix_start_universe: 0,
+  matrix_status: {},
 };
 
 const preview = {
@@ -45,6 +50,13 @@ const signalEl = document.getElementById('signal');
 const canvas = document.getElementById('swatch');
 const workspaceEl = document.getElementById('workspace');
 const modeEffectEl = document.getElementById('mode-effect');
+const modeNetworkEl = document.getElementById('mode-network');
+const matrixChannelsEl = document.getElementById('matrix-channels');
+const matrixSizeEl = document.getElementById('matrix-size');
+const matrixAddressEl = document.getElementById('matrix-address');
+const matrixStartEl = document.getElementById('matrix-start');
+const matrixStatusEl = document.getElementById('matrix-status');
+const matrixErrorEl = document.getElementById('matrix-error');
 const modeNdiEl = document.getElementById('mode-ndi');
 const ndiSourceEl = document.getElementById('ndi-source');
 const ndiPanelEl = document.getElementById('ndi-panel');
@@ -150,14 +162,34 @@ function renderControls() {
   autoplayEl.checked = state.autoplay;
   modeEffectEl.classList.toggle('active', effectMode);
   modeEffectEl.setAttribute('aria-pressed', String(effectMode));
-  modeNdiEl.classList.toggle('active', !effectMode);
-  modeNdiEl.setAttribute('aria-pressed', String(!effectMode));
+  const ndiMode = state.input_mode === 'ndi';
+  const networkMode = state.input_mode === 'network_matrix';
+  modeNetworkEl.classList.toggle('active', networkMode);
+  modeNetworkEl.setAttribute('aria-pressed', String(networkMode));
+  document.getElementById('network-panel').hidden = !networkMode;
+  matrixSizeEl.value = state.matrix_size;
+  matrixChannelsEl.value = state.matrix_channels_per_universe;
+  const firstUniverseCapacity = state.matrix_channels_per_universe - state.matrix_start_address + 1;
+  const remainingChannels = Math.max(0, state.matrix_size ** 2 * 3 - firstUniverseCapacity);
+  const universeCount = 1 + Math.ceil(remainingChannels / state.matrix_channels_per_universe);
+  matrixStartEl.max = 32768 - universeCount + 1;
+  if (document.activeElement !== matrixStartEl) matrixStartEl.value = state.matrix_start_universe + 1;
+  if (document.activeElement !== matrixAddressEl) matrixAddressEl.value = state.matrix_start_address;
+  matrixAddressEl.max = state.matrix_channels_per_universe;
+  const stats = state.matrix_status || {};
+  matrixStatusEl.textContent = stats.packets
+    ? `${stats.packets} packets / ${stats.age < 2 ? 'Receiving' : 'Signal lost; holding pixels'}`
+    : 'Waiting for ArtNet';
+  matrixErrorEl.hidden = !state.error;
+  matrixErrorEl.textContent = state.error || '';
+  modeNdiEl.classList.toggle('active', ndiMode);
+  modeNdiEl.setAttribute('aria-pressed', String(ndiMode));
   workspaceEl.hidden = !effectMode;
-  ndiPanelEl.hidden = effectMode;
+  ndiPanelEl.hidden = !ndiMode;
   const ndiStatus = currentNdiStatus();
-  ndiStatusEl.hidden = effectMode || !ndiStatus;
+  ndiStatusEl.hidden = !ndiMode || !ndiStatus;
   ndiStatusEl.textContent = ndiStatus;
-  ndiErrorEl.hidden = effectMode || !state.error;
+  ndiErrorEl.hidden = !ndiMode || !state.error;
   ndiErrorEl.textContent = state.error || '';
   renderNdiSources();
   if (document.activeElement !== autoplayIntervalEl) {
@@ -210,6 +242,7 @@ function setOnline(online, message) {
 }
 
 function currentStatus() {
+  if (state.input_mode === 'network_matrix') return `ArtNet / ${state.matrix_size} x ${state.matrix_size}`;
   if (state.input_mode === 'ndi') {
     if (!state.ndi_source) return 'Select an NDI source';
     return state.ndi_source;
@@ -486,6 +519,19 @@ autoplayEl.addEventListener('change', () => updateState({ autoplay: autoplayEl.c
 autoplayIntervalEl.addEventListener('change', () => updateState({
   autoplay_interval: Number(autoplayIntervalEl.value),
 }));
+matrixAddressEl.addEventListener('change', () => {
+  if (matrixAddressEl.reportValidity()) updateState({ matrix_start_address: Number(matrixAddressEl.value) });
+});
+modeNetworkEl.addEventListener('click', () => updateState({ input_mode: 'network_matrix' }));
+matrixChannelsEl.addEventListener('change', () => {
+  const channels = Number(matrixChannelsEl.value);
+  const address = Math.min(state.matrix_start_address, channels);
+  updateState({ matrix_channels_per_universe: channels, matrix_start_address: address });
+});
+matrixSizeEl.addEventListener('change', () => updateState({ matrix_size: Number(matrixSizeEl.value) }));
+matrixStartEl.addEventListener('change', () => {
+  if (matrixStartEl.reportValidity()) updateState({ matrix_start_universe: Number(matrixStartEl.value) - 1 });
+});
 modeEffectEl.addEventListener('click', () => updateState({ input_mode: 'effect' }));
 modeNdiEl.addEventListener('click', () => updateState({ input_mode: 'ndi' }));
 ndiSourceEl.addEventListener('change', () => {

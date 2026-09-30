@@ -106,7 +106,7 @@ p {
 
 .mode-switch {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 160px));
+  grid-template-columns: repeat(3, minmax(0, 160px));
   gap: 0;
   padding-top: 18px;
 }

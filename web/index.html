@@ -19,6 +19,7 @@
     <nav class="mode-switch" aria-label="Input mode">
       <button id="mode-effect" type="button" data-mode="effect">Effect</button>
       <button id="mode-ndi" type="button" data-mode="ndi">NDI</button>
+      <button id="mode-network" type="button" data-mode="network_matrix">Network Matrix</button>
     </nav>
 
     <section class="workspace" id="workspace">
@@ -74,6 +75,26 @@
         <small id="ndi-status" class="input-status" hidden></small>
         <strong id="ndi-error" class="input-error" hidden></strong>
       </label>
+    </section>
+
+    <section class="ndi-panel" id="network-panel" hidden>
+      <label><span>Protocol</span><select disabled><option>ArtNet</option></select></label>
+      <label><span>Matrix size</span><select id="matrix-size">
+        <option value="16">16 &times; 16</option><option value="32">32 &times; 32</option><option value="64">64 &times; 64</option>
+      </select></label>
+      <label><span>Channels per universe</span><select id="matrix-channels">
+        <option value="510">510 - keep RGB pixels together</option>
+        <option value="512">512 - allow pixels across universes</option>
+      </select></label>
+      <label><span>Starting universe (1-based)</span>
+        <input id="matrix-start" type="number" min="1" max="32768" step="1" value="1">
+      </label>
+      <label><span>Starting address in first universe</span>
+        <input id="matrix-address" type="number" min="1" max="510" step="1" value="1">
+      </label>
+      <p>RGB, left to right, top to bottom. Match channel packing to your sender. UDP port 6454.</p>
+      <small id="matrix-status" class="input-status"></small>
+      <strong id="matrix-error" class="input-error" hidden></strong>
     </section>
 
     <section class="output-controls" aria-label="Output controls">
