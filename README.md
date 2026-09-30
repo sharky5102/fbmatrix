@@ -438,10 +438,21 @@ after the shader returns.
 ### Network Matrix (ArtNet)
 
 Select **Network Matrix** in the web UI, choose 16x16, 32x32 or 64x64,
-and set the starting universe (displayed from 1, default 1). The UI number follows QLC+; Art-Net Port-Addresses are zero-based on the wire. Set the one-based starting DMX address within the first universe (default 1). Settings are saved when
+and set the zero-based starting universe (default 0), matching the Art-Net
+Port-Address on the wire. Set
+the one-based starting DMX address within the first universe (default 1). Settings are saved when
 `--state-file` is enabled. The receiver listens on all IPv4 interfaces on UDP
-6454 while this mode is active. Configure the sender to unicast to the server's
-IP address; ArtPoll discovery is not implemented.
+6454 while this mode is active. The receiver answers ArtPoll with ArtPollReply
+packets describing the configured input universes. Replies advertise up to four
+ports each and split at Net/Sub-Net boundaries. The per-universe start channel
+and 510/512 packing follow the advertised name because ArtPollReply has no
+fields for those settings. Set that name on the command line with
+`--artnet-name custom-name`; the default is `fbmserve`.
+
+By default ArtPollReply packets are unicast to the polling controller. For a
+same-host discovery experiment, `--artnet-poll-broadcast` sends them instead to
+`255.255.255.255:6454`; this is a test option and is not standard Art-Net
+ArtPollReply behavior.
 
 Send RGB channels in row order, left to right and top to bottom. Select
 **Channels per universe** to match the sender:

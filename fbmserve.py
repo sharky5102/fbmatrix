@@ -193,7 +193,8 @@ class AppState:
 class InputRenderer:
     def __init__(self, effects_dir, effects, width, height, state, commands,
                  ndi_runtime=None, matrix=None, led_effects_dir='led_effects',
-                 dmx_receiver=None, dmx_start=1, dmx_hold=30.0):
+                 dmx_receiver=None, dmx_start=1, dmx_hold=30.0,
+                 artnet_poll_broadcast=False, artnet_node_name='fbmserve'):
         self.effects_dir = effects_dir
         self.effects = effects
         self.width = width
@@ -223,6 +224,8 @@ class InputRenderer:
         self.dmx_receiver = dmx_receiver
         self.dmx_start = dmx_start
         self.dmx_hold = dmx_hold
+        self.artnet_poll_broadcast = artnet_poll_broadcast
+        self.artnet_node_name = artnet.validate_node_name(artnet_node_name)
         self.dmx_values = None
         self.last_dmx_frame = None
         self.schedule_autoplay()
@@ -311,7 +314,8 @@ class InputRenderer:
 
     def render_network_matrix(self, snapshot):
         config = (snapshot['matrix_size'], snapshot['matrix_start_universe'],
-                  snapshot['matrix_channels_per_universe'], snapshot['matrix_start_address'])
+                  snapshot['matrix_channels_per_universe'], snapshot['matrix_start_address'],
+                  self.artnet_node_name)
         try:
             if config != self.network_config:
                 self.close_network_receiver()
@@ -319,7 +323,9 @@ class InputRenderer:
                     from assembly.network_matrix import NetworkMatrixQuad
                     self.network_quad = NetworkMatrixQuad()
                 self.network_receiver = artnet.Receiver(config[0], config[1], channels_per_universe=config[2],
-                                                start_address=config[3])
+                                                start_address=config[3],
+                                                poll_broadcast=self.artnet_poll_broadcast,
+                                                node_name=config[4])
                 self.network_config = config
                 self.state.update(error=None)
             pixels, status = self.network_receiver.snapshot()
@@ -735,6 +741,8 @@ def load_state_file(filename, effect_ids, led_effect_ids):
         if not isinstance(values, dict):
             raise ValueError('expected an object')
         # Migrate snapshots saved before Network Matrix was added.
+        # Advertised Art-Net identity is command-line configuration, not state.
+        values.pop('matrix_node_name', None)
         values.setdefault('matrix_size', 16)
         values.setdefault('matrix_start_universe', 0)
         values.setdefault('matrix_channels_per_universe', 510)
@@ -820,6 +828,10 @@ def main():
                         help='Seconds to retain DMX values after signal loss')
     parser.add_argument('--artnet-debug', action='store_true',
                         help='Log ArtNet reception and framebuffer diagnostics once per second')
+    parser.add_argument('--artnet-name', type=artnet.validate_node_name, default='fbmserve',
+                        help='Advertised Art-Net node name (default: fbmserve)')
+    parser.add_argument('--artnet-poll-broadcast', action='store_true',
+                        help='TEST ONLY: broadcast ArtPollReply packets to 255.255.255.255')
     args = parser.parse_args()
     if args.artnet_debug:
         logging.basicConfig(level=logging.WARNING,
@@ -889,7 +901,7 @@ def main():
     renderer = InputRenderer(effects_dir, effects, matrix.source_columns, matrix.source_rows,
                              state, commands, ndi_runtime, matrix,
                              led_effects_dir, dmx_receiver, args.dmx_start or 1,
-                             args.dmx_hold)
+                             args.dmx_hold, args.artnet_poll_broadcast, args.artnet_name)
     try:
         matrix.run(renderer.render)
     finally:

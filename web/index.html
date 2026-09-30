@@ -86,8 +86,8 @@
         <option value="510">510 - keep RGB pixels together</option>
         <option value="512">512 - allow pixels across universes</option>
       </select></label>
-      <label><span>Starting universe (1-based)</span>
-        <input id="matrix-start" type="number" min="1" max="32768" step="1" value="1">
+      <label><span>Starting universe (zero-based Art-Net address)</span>
+        <input id="matrix-start" type="number" min="0" max="32767" step="1" value="0">
       </label>
       <label><span>Starting address in first universe</span>
         <input id="matrix-address" type="number" min="1" max="510" step="1" value="1">

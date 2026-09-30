@@ -172,8 +172,8 @@ function renderControls() {
   const firstUniverseCapacity = state.matrix_channels_per_universe - state.matrix_start_address + 1;
   const remainingChannels = Math.max(0, state.matrix_size ** 2 * 3 - firstUniverseCapacity);
   const universeCount = 1 + Math.ceil(remainingChannels / state.matrix_channels_per_universe);
-  matrixStartEl.max = 32768 - universeCount + 1;
-  if (document.activeElement !== matrixStartEl) matrixStartEl.value = state.matrix_start_universe + 1;
+  matrixStartEl.max = 32768 - universeCount;
+  if (document.activeElement !== matrixStartEl) matrixStartEl.value = state.matrix_start_universe;
   if (document.activeElement !== matrixAddressEl) matrixAddressEl.value = state.matrix_start_address;
   matrixAddressEl.max = state.matrix_channels_per_universe;
   const stats = state.matrix_status || {};
@@ -530,7 +530,7 @@ matrixChannelsEl.addEventListener('change', () => {
 });
 matrixSizeEl.addEventListener('change', () => updateState({ matrix_size: Number(matrixSizeEl.value) }));
 matrixStartEl.addEventListener('change', () => {
-  if (matrixStartEl.reportValidity()) updateState({ matrix_start_universe: Number(matrixStartEl.value) - 1 });
+  if (matrixStartEl.reportValidity()) updateState({ matrix_start_universe: Number(matrixStartEl.value) });
 });
 modeEffectEl.addEventListener('click', () => updateState({ input_mode: 'effect' }));
 modeNdiEl.addEventListener('click', () => updateState({ input_mode: 'ndi' }));

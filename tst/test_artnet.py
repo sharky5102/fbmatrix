@@ -80,12 +80,12 @@ def test_renderer_uploads_once_per_frame_and_reconfigures():
     with mock.patch.object(artnet, 'Receiver', return_value=receiver) as factory:
         renderer.render()
         renderer.render()
-        factory.assert_called_once_with(16, 0, channels_per_universe=510, start_address=1)
+        factory.assert_called_once_with(16, 0, channels_per_universe=510, start_address=1, poll_broadcast=False, node_name='fbmserve')
         assert renderer.network_quad.setRGB.call_count == 2
         assert renderer.network_quad.render.call_count == 2
         state.update(matrix_size=32, matrix_start_universe=10)
         renderer.render()
-        factory.assert_called_with(32, 10, channels_per_universe=510, start_address=1)
+        factory.assert_called_with(32, 10, channels_per_universe=510, start_address=1, poll_broadcast=False, node_name='fbmserve')
         assert receiver.close.call_count == 1
         state.update(input_mode='ndi')
         renderer.render()
@@ -116,11 +116,13 @@ def test_state_migration_and_persistence(tmp_path):
     path = tmp_path / 'state.json'
     path.write_text(json.dumps(saved))
     assert fbmserve.load_state_file(path, {'solid'}, {'default'}) == saved
+    saved['matrix_node_name'] = 'old saved name'
     del saved['matrix_channels_per_universe']
     del saved['matrix_size']
     del saved['matrix_start_universe']
     path.write_text(json.dumps(saved))
     loaded = fbmserve.load_state_file(path, {'solid'}, {'default'})
+    assert 'matrix_node_name' not in loaded
     assert loaded['matrix_channels_per_universe'] == 510
     assert loaded['matrix_size'] == 16
     assert loaded['matrix_start_universe'] == 0
@@ -197,7 +199,7 @@ def test_packing_changes_restart_receiver():
         state.update(matrix_channels_per_universe=512)
         renderer.render()
         receiver.close.assert_called_once()
-        factory.assert_called_with(16, 0, channels_per_universe=512, start_address=1)
+        factory.assert_called_with(16, 0, channels_per_universe=512, start_address=1, poll_broadcast=False, node_name='fbmserve')
     renderer.close()
 
 
@@ -296,3 +298,148 @@ def test_artsync_resumes_after_timeout_from_current_visible_frame():
         assert buffer.snapshot()[0][:510] == bytes([3]) * 510
         buffer.update(sync_packet(), source)
         assert buffer.snapshot()[0][:510] == bytes([4]) * 510
+
+
+@pytest.mark.parametrize('start,count,expected', [
+    (0, 2, [[0, 1]]),
+    (12, 8, [[12, 13, 14, 15], [16, 17, 18, 19]]),
+    (14, 25, [[14, 15], [16, 17, 18, 19], [20, 21, 22, 23],
+              [24, 25, 26, 27], [28, 29, 30, 31], [32, 33, 34, 35],
+              [36, 37, 38]]),
+    (256, 1, [[256]]),
+])
+def test_poll_reply_groups_split_at_four_ports_and_subnet_boundaries(
+        start, count, expected):
+    assert artnet.poll_reply_groups(start, count) == expected
+
+
+def poll_reply_address(reply, port_index):
+    base = (reply[18] << 8) | (reply[19] << 4)
+    return base | reply[190 + port_index]
+
+
+def test_poll_reply_advertises_universes_and_channel_configuration():
+    replies = artnet.build_poll_replies(
+        '192.0.2.10', 64, 14, 512, 17)
+    assert len(replies) == 7
+    assert all(len(reply) == artnet.ART_POLL_REPLY_SIZE for reply in replies)
+    assert all(reply[:8] == artnet.ARTNET_ID for reply in replies)
+    assert all(int.from_bytes(reply[8:10], 'little') == artnet.OP_POLL_REPLY
+               for reply in replies)
+    assert all(reply[10:14] == b'\xc0\x00\x02\x0a' for reply in replies)
+    assert all(int.from_bytes(reply[14:16], 'little') == artnet.PORT
+               for reply in replies)
+    assert all(int.from_bytes(reply[16:18], 'big') == artnet.MIN_PROTOCOL_VERSION
+               for reply in replies)
+    advertised = []
+    for index, reply in enumerate(replies, start=1):
+        num_ports = int.from_bytes(reply[172:174], 'big')
+        assert 1 <= num_ports <= 4
+        assert reply[174:174 + num_ports] == bytes([0x80]) * num_ports
+        assert reply[211] == index
+        assert reply[212] & 0x08
+        assert reply[207:211] == b'\xc0\x00\x02\x0a'
+        assert b'fbmserve 64x64 u14 512ch/univ addr17' in reply[44:108]
+        advertised.extend(poll_reply_address(reply, i) for i in range(num_ports))
+    count = artnet.validate_config(64, 14, 512, 17)
+    assert advertised == list(range(14, 14 + count))
+
+
+def test_poll_reply_net_and_subnet_switches_roll_over_correctly():
+    # Port-Address 0x01ff is Net 1, Sub-Net 15, Universe 15. The next
+    # address crosses into Net 2/Sub-Net 0 and must start another reply.
+    replies = artnet.build_poll_replies('192.0.2.1', 16, 0x01ff, 510, 1)
+    assert len(replies) == 2
+    assert int.from_bytes(replies[0][172:174], 'big') == 1
+    assert replies[0][18] == 1
+    assert replies[0][19] == 15
+    assert poll_reply_address(replies[0], 0) == 0x01ff
+    assert int.from_bytes(replies[1][172:174], 'big') == 1
+    assert replies[1][18] == 2
+    assert replies[1][19] == 0
+    assert poll_reply_address(replies[1], 0) == 0x0200
+
+
+def test_targeted_poll_only_replies_when_range_intersects_matrix():
+    args = ('192.0.2.1', 32, 14, 510, 1)
+    assert artnet.build_poll_replies(*args, targeted_range=(0, 13)) == []
+    assert artnet.build_poll_replies(*args, targeted_range=(20, 20))
+    assert artnet.build_poll_replies(*args, targeted_range=(14, 14))
+
+
+def test_receiver_answers_artpoll_with_unicast_poll_replies():
+    receiver = object.__new__(artnet.Receiver)
+    artnet.PixelBuffer.__init__(receiver, 64, 14, 510, 1)
+    receiver.socket = mock.Mock()
+    receiver.poll_broadcast = False
+    route = mock.MagicMock()
+    route.__enter__.return_value.getsockname.return_value = ('192.0.2.5', 6454)
+    poll = (b'Art-Net\0' + struct.pack('<H', artnet.OP_POLL)
+            + struct.pack('>H', artnet.MIN_PROTOCOL_VERSION) + b'\0\0')
+    with mock.patch.object(artnet.socket, 'socket', return_value=route) as make_socket:
+        assert receiver.respond_to_poll(poll, ('192.0.2.20', 6454))
+    make_socket.assert_called_once_with(artnet.socket.AF_INET, artnet.socket.SOCK_DGRAM)
+    route.__enter__.return_value.connect.assert_called_once_with(('192.0.2.20', 6454))
+    assert receiver.socket.sendto.call_count == 7
+    assert all(call.args[1] == ('192.0.2.20', 6454)
+               for call in receiver.socket.sendto.call_args_list)
+    assert receiver.diagnostics['poll'] == 1
+    assert receiver.diagnostics['poll_replies'] == 7
+
+
+def test_receiver_respects_targeted_artpoll_and_rejects_short_requests():
+    receiver = object.__new__(artnet.Receiver)
+    artnet.PixelBuffer.__init__(receiver, 16, 10, 510, 1)
+    receiver.socket = mock.Mock()
+    receiver.poll_broadcast = False
+    route = mock.MagicMock()
+    route.__enter__.return_value.getsockname.return_value = ('192.0.2.5', 6454)
+    with mock.patch.object(artnet.socket, 'socket', return_value=route):
+        short_poll = (b'Art-Net\0' + struct.pack('<H', artnet.OP_POLL)
+                      + struct.pack('>H', 14) + b'\0\0')
+        assert not receiver.respond_to_poll(short_poll[:13], ('192.0.2.20', 6454))
+        targeted = bytearray(short_poll + bytes(4))
+        targeted[12] = artnet.ART_POLL_TARGETED
+        targeted[14:16] = (9).to_bytes(2, 'big')
+        targeted[16:18] = (8).to_bytes(2, 'big')
+        assert receiver.respond_to_poll(bytes(targeted), ('192.0.2.20', 6454))
+    receiver.socket.sendto.assert_not_called()
+    assert receiver.diagnostics['short_poll'] == 1
+    assert receiver.diagnostics['poll_replies'] == 0
+
+
+
+def test_broadcast_poll_reply_targets_limited_broadcast():
+    receiver = object.__new__(artnet.Receiver)
+    artnet.PixelBuffer.__init__(receiver)
+    receiver.poll_broadcast = True
+    receiver.socket = mock.Mock()
+    route = mock.MagicMock()
+    route.__enter__.return_value.getsockname.return_value = ('192.0.2.5', 6454)
+    poll = (b'Art-Net\0' + struct.pack('<H', artnet.OP_POLL)
+            + struct.pack('>H', artnet.MIN_PROTOCOL_VERSION) + b'\0\0')
+    with mock.patch.object(artnet.socket, 'socket', return_value=route):
+        assert receiver.respond_to_poll(poll, ('127.0.0.1', 6454))
+    receiver.socket.sendto.assert_called_once()
+    assert receiver.socket.sendto.call_args.args[1] == ('255.255.255.255', 6454)
+
+
+def test_broadcast_receiver_enables_udp_broadcast():
+    receiver = artnet.Receiver(port=0, host='127.0.0.1', poll_broadcast=True)
+    try:
+        assert receiver.socket.getsockopt(
+            socket.SOL_SOCKET, socket.SO_BROADCAST) == 1
+    finally:
+        receiver.close()
+
+
+@pytest.mark.parametrize('name', ['', 'x' * 32, 'non-ascii-\u00e9', 'bad\nname'])
+def test_invalid_advertised_node_name_is_rejected(name):
+    with pytest.raises(ValueError):
+        artnet.validate_node_name(name)
+
+
+def test_poll_reply_uses_configured_node_name():
+    reply = artnet.build_poll_replies(
+        '192.0.2.1', 16, 0, 510, 1, node_name='Studio Matrix')[0]
+    assert reply[44:108].split(b'\0', 1)[0] == b'Studio Matrix 16x16 u0 510ch/univ addr1'
