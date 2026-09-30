@@ -78,7 +78,9 @@
     </section>
 
     <section class="ndi-panel" id="network-panel" hidden>
-      <label><span>Protocol</span><select disabled><option>ArtNet</option></select></label>
+      <label><span>Protocol</span><select id="matrix-protocol">
+        <option value="artnet">Art-Net</option><option value="sacn">sACN</option>
+      </select></label>
       <label><span>Matrix size</span><select id="matrix-size">
         <option value="16">16 &times; 16</option><option value="32">32 &times; 32</option><option value="64">64 &times; 64</option>
       </select></label>
@@ -86,13 +88,16 @@
         <option value="510">510 - keep RGB pixels together</option>
         <option value="512">512 - allow pixels across universes</option>
       </select></label>
-      <label><span>Starting universe (zero-based Art-Net address)</span>
-        <input id="matrix-start" type="number" min="0" max="32767" step="1" value="0">
+      <label id="matrix-artnet-universe-label"><span>Art-Net starting Port-Address (0-based)</span>
+        <input id="matrix-artnet-universe" type="number" min="0" max="32767" step="1" value="0">
+      </label>
+      <label id="matrix-sacn-universe-label" hidden><span>sACN starting universe (1-based)</span>
+        <input id="matrix-sacn-universe" type="number" min="1" max="63999" step="1" value="1">
       </label>
       <label><span>Starting address in first universe</span>
         <input id="matrix-address" type="number" min="1" max="510" step="1" value="1">
       </label>
-      <p>RGB, left to right, top to bottom. Match channel packing to your sender. UDP port 6454.</p>
+      <p id="matrix-protocol-help">RGB, left to right, top to bottom. Match channel packing to your sender. Art-Net uses UDP port 6454.</p>
       <small id="matrix-status" class="input-status"></small>
       <strong id="matrix-error" class="input-error" hidden></strong>
     </section>

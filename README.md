@@ -435,55 +435,40 @@ or ignore the source framebuffer. The renderer forces disabled LEDs black
 after the shader returns.
 
 
-### Network Matrix (ArtNet)
+### Network Matrix (Art-Net and sACN)
 
-Select **Network Matrix** in the web UI, choose 16x16, 32x32 or 64x64,
-and set the zero-based starting universe (default 0), matching the Art-Net
-Port-Address on the wire. Set
-the one-based starting DMX address within the first universe (default 1). Settings are saved when
-`--state-file` is enabled. The receiver listens on all IPv4 interfaces on UDP
-6454 while this mode is active. The receiver answers ArtPoll with ArtPollReply
-packets describing the configured input universes. Replies advertise up to four
-ports each and split at Net/Sub-Net boundaries. The per-universe start channel
-and 510/512 packing follow the advertised name because ArtPollReply has no
-fields for those settings. Set that name on the command line with
-`--artnet-name custom-name`; the default is `fbmserve`.
+Select **Network Matrix** in the web UI, choose Art-Net or sACN, and choose
+16x16, 32x32 or 64x64. Configure the starting address for your chosen
+protocol: Art-Net uses a zero-based Port-Address (default 0), while sACN uses
+a one-based universe (default 1). Set the one-based starting DMX address in
+the first universe (default 1). The two protocol addresses are saved
+separately, so switching protocols preserves each value. Settings are saved
+across restarts when `--state-file` is enabled.
 
-By default ArtPollReply packets are unicast to the polling controller. For a
-same-host discovery experiment, `--artnet-poll-broadcast` sends them instead to
-`255.255.255.255:6454`; this is a test option and is not standard Art-Net
-ArtPollReply behavior.
+For Art-Net, fbmserve announces the configured matrix universes to network
+controllers. Set the advertised device name with `--artnet-name`; it defaults
+to `fbmserve`. Art-Net uses UDP port 6454. For sACN, fbmserve listens on UDP
+port 5568 and receives the configured universes. sACN universe numbers start
+at 1.
 
-Send RGB channels in row order, left to right and top to bottom. Select
+The receiver maps RGB channels from left to right, top to bottom. Choose
 **Channels per universe** to match the sender:
 
 - **510** (default): 170 complete RGB pixels per universe; channels 511-512
-  are ignored. The three matrix sizes require 2, 7 or 25 universes.
-- **512**: all channels are packed continuously, allowing an RGB pixel
-  to span two universes. The three matrix sizes require 2, 6 or 24 universes.
+  are skipped. The three matrix sizes use 2, 7 or 25 universes.
+- **512**: channels are packed continuously, so a pixel may span two
+  universes. The three matrix sizes use 2, 6 or 24 universes.
 
-Changing packing restarts reception with a black buffer. The choice is saved
-with the other matrix settings; older saved configurations default to 510. Each ArtDmx packet immediately
-updates its portion of the pixel buffer; one buffer snapshot is uploaded and
-blitted to the existing 2D framebuffer per render frame. Partial packets leave
-unspecified channels unchanged. Pixels start black on activation/reconfiguration
-and retain their last values on signal loss. Packets are applied in arrival
-order, without sequence filtering or merging between senders.
-
-ArtDmx packets update the staging buffer while ArtSync is active; each valid
-ArtSync publishes the staged frame. If no matching ArtSync arrives for four
-seconds, ArtDmx updates become immediate until synchronization resumes. ArtSync
-packets from an IP other than the latest ArtDmx sender are ignored. sACN is not
-implemented. Packet validation follows the
-[Art-Net specification](https://art-net.org.uk/downloads/art-net.pdf).
+Partial updates leave other channels unchanged. The display starts black and
+holds its last image when updates stop. Art-Net updates appear immediately
+unless the sender uses ArtSync; with ArtSync, updates appear together when the
+sync packet arrives. If ArtSync stops for four seconds, Art-Net updates resume
+appearing immediately. sACN updates appear as they arrive; sACN synchronization
+is not currently supported.
 
 
-For a blank Network Matrix display, add `--artnet-debug` to the `fbmserve.py`
-command. Once per second, stderr reports packet acceptance/rejection totals,
-observed zero-based universes, the last sender and packet's first 12 channels,
-and nonzero channel counts in both the receive buffer and the rendered buffer.
-It also reports output brightness and the active LED effect. Rejection totals
-such as `outside_universe_range` indicate a patch mismatch; accepted all-zero
-data indicates that the sender is sending black. Nonzero rendered data narrows
-the investigation to the framebuffer/output path. Without the flag, these
-messages are disabled.
+For help diagnosing a blank Network Matrix display, run `fbmserve.py` with
+`--artnet-debug` or `--sacn-debug`, matching the selected protocol. The log
+shows which universes and channel values are arriving and whether the matrix
+contains non-black pixels. Without these options, diagnostic messages are
+disabled.

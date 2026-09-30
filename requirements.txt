@@ -4,3 +4,4 @@ pyrr
 pytest
 cffi
 ffpyplayer
+sacn>=1.11,<2

@@ -22,6 +22,7 @@ else:
     DMXReceiver = None
 import ndi
 import artnet
+import sacn_receiver
 import led_effect
 
 
@@ -46,6 +47,12 @@ def get_shader_effect():
     return shader_effect
 
 
+def validate_matrix_protocol_config(config, key, label):
+    if not isinstance(config, dict) or set(config) != {key}:
+        raise ValueError('Invalid %s Network Matrix settings' % label)
+    return config[key]
+
+
 @dataclasses.dataclass(init=False)
 class AppState:
     # Fields are durable by default. Runtime-only fields must opt out, making a
@@ -64,7 +71,9 @@ class AppState:
     matrix_size: int
     matrix_channels_per_universe: int
     matrix_start_address: int
-    matrix_start_universe: int
+    matrix_artnet: dict
+    matrix_sacn: dict
+    matrix_protocol: str
     matrix_status: dict = dataclasses.field(metadata={'persist': False})
     led_effect: str
     supersample: float
@@ -94,9 +103,11 @@ class AppState:
         state_file=None,
         led_effect=None,
         matrix_size=16,
-        matrix_start_universe=0,
+        matrix_artnet=None,
+        matrix_sacn=None,
         matrix_channels_per_universe=510,
         matrix_start_address=1,
+        matrix_protocol='artnet',
     ):
         self.lock = threading.Lock()
         self.effect = effect
@@ -110,11 +121,20 @@ class AppState:
         self.autoplay_effects = autoplay_effects or []
         self.input_mode = input_mode
         self.ndi_source = ndi_source
-        artnet.validate_config(matrix_size, matrix_start_universe, matrix_channels_per_universe, matrix_start_address)
+        if matrix_protocol not in ('artnet', 'sacn'):
+            raise ValueError('Unknown Network Matrix protocol')
+        matrix_artnet = {'port_address': 0} if matrix_artnet is None else matrix_artnet
+        matrix_sacn = {'universe': 1} if matrix_sacn is None else matrix_sacn
+        artnet_port = validate_matrix_protocol_config(matrix_artnet, 'port_address', 'Art-Net')
+        sacn_universe = validate_matrix_protocol_config(matrix_sacn, 'universe', 'sACN')
+        artnet.validate_config(matrix_size, artnet_port, matrix_channels_per_universe, matrix_start_address)
+        sacn_receiver.validate_config(matrix_size, sacn_universe, matrix_channels_per_universe, matrix_start_address)
+        self.matrix_protocol = matrix_protocol
+        self.matrix_artnet = dict(matrix_artnet)
+        self.matrix_sacn = dict(matrix_sacn)
         self.matrix_channels_per_universe = matrix_channels_per_universe
         self.matrix_start_address = matrix_start_address
         self.matrix_size = matrix_size
-        self.matrix_start_universe = matrix_start_universe
         self.matrix_status = {}
         self.ndi_status = ndi_status or {}
         self.led_effect = led_effect_id if led_effect is None else led_effect
@@ -313,7 +333,10 @@ class InputRenderer:
             self.state.update(error=str(e))
 
     def render_network_matrix(self, snapshot):
-        config = (snapshot['matrix_size'], snapshot['matrix_start_universe'],
+        protocol = snapshot['matrix_protocol']
+        start_universe = (snapshot['matrix_sacn']['universe'] if protocol == 'sacn'
+                          else snapshot['matrix_artnet']['port_address'])
+        config = (protocol, snapshot['matrix_size'], start_universe,
                   snapshot['matrix_channels_per_universe'], snapshot['matrix_start_address'],
                   self.artnet_node_name)
         try:
@@ -322,25 +345,30 @@ class InputRenderer:
                 if self.network_quad is None:
                     from assembly.network_matrix import NetworkMatrixQuad
                     self.network_quad = NetworkMatrixQuad()
-                self.network_receiver = artnet.Receiver(config[0], config[1], channels_per_universe=config[2],
-                                                start_address=config[3],
-                                                poll_broadcast=self.artnet_poll_broadcast,
-                                                node_name=config[4])
+                if protocol == 'sacn':
+                    self.network_receiver = sacn_receiver.Receiver(config[1], config[2],
+                        channels_per_universe=config[3], start_address=config[4])
+                else:
+                    self.network_receiver = artnet.Receiver(config[1], config[2], channels_per_universe=config[3],
+                                                    start_address=config[4],
+                                                    poll_broadcast=self.artnet_poll_broadcast,
+                                                    node_name=config[5])
                 self.network_config = config
                 self.state.update(error=None)
             pixels, status = self.network_receiver.snapshot()
-            self.network_quad.setRGB(pixels, config[0], config[0])
+            self.network_quad.setRGB(pixels, config[1], config[1])
             self.network_quad.render()
-            if artnet.logger.isEnabledFor(logging.DEBUG) and time.monotonic() >= self.next_network_debug:
+            network_logger = sacn_receiver.logger if protocol == 'sacn' else artnet.logger
+            if network_logger.isEnabledFor(logging.DEBUG) and time.monotonic() >= self.next_network_debug:
                 self.next_network_debug = time.monotonic() + 1.0
-                artnet.logger.debug('Rendered RGB buffer %dx%d to framebuffer %dx%d; '
-                                    'nonzero=%d/%d peak=%d brightness=%.3f LED effect=%s',
-                                    config[0], config[0], self.width, self.height,
-                                    sum(value != 0 for value in pixels), len(pixels), max(pixels),
-                                    snapshot['brightness'], snapshot['led_effect'])
+                network_logger.debug('Rendered RGB buffer %dx%d to framebuffer %dx%d; '
+                                     'nonzero=%d/%d peak=%d brightness=%.3f LED effect=%s',
+                                     config[1], config[1], self.width, self.height,
+                                     sum(value != 0 for value in pixels), len(pixels), max(pixels),
+                                     snapshot['brightness'], snapshot['led_effect'])
             self.state.update(matrix_status=status, error=status['error'])
         except (OSError, RuntimeError) as error:
-            self.state.update(error='ArtNet: %s' % error)
+            self.state.update(error='%s: %s' % (protocol.upper(), error))
 
     def close_network_receiver(self):
         if self.network_receiver is not None:
@@ -543,16 +571,30 @@ class RequestHandler(BaseHTTPRequestHandler):
                 raise ValueError('Unknown input mode')
             values['input_mode'] = mode
 
+        if 'matrix_protocol' in payload:
+            protocol = payload['matrix_protocol']
+            if protocol not in ('artnet', 'sacn'):
+                raise ValueError('Unknown Network Matrix protocol')
+            values['matrix_protocol'] = protocol
+
         if any(key in payload for key in (
-                'matrix_size', 'matrix_start_universe', 'matrix_channels_per_universe',
-                'matrix_start_address')):
+                'matrix_size', 'matrix_channels_per_universe', 'matrix_start_address',
+                'matrix_protocol', 'matrix_artnet', 'matrix_sacn')):
             current = self.server.app_state.snapshot()
+            protocol = payload.get('matrix_protocol', current['matrix_protocol'])
             size = payload.get('matrix_size', current['matrix_size'])
-            start = payload.get('matrix_start_universe', current['matrix_start_universe'])
+            artnet_config = payload.get('matrix_artnet', current['matrix_artnet'])
+            sacn_config = payload.get('matrix_sacn', current['matrix_sacn'])
             channels = payload.get('matrix_channels_per_universe', current['matrix_channels_per_universe'])
             address = payload.get('matrix_start_address', current['matrix_start_address'])
-            artnet.validate_config(size, start, channels, address)
-            values.update(matrix_size=size, matrix_start_universe=start,
+            artnet_port = validate_matrix_protocol_config(artnet_config, 'port_address', 'Art-Net')
+            sacn_universe = validate_matrix_protocol_config(sacn_config, 'universe', 'sACN')
+            # Keep both independently saved protocol profiles valid while
+            # editing shared matrix dimensions and channel packing.
+            artnet.validate_config(size, artnet_port, channels, address)
+            sacn_receiver.validate_config(size, sacn_universe, channels, address)
+            values.update(matrix_protocol=protocol, matrix_size=size,
+                          matrix_artnet=artnet_config, matrix_sacn=sacn_config,
                           matrix_channels_per_universe=channels, matrix_start_address=address)
 
         if 'ndi_source' in payload:
@@ -744,11 +786,19 @@ def load_state_file(filename, effect_ids, led_effect_ids):
         # Advertised Art-Net identity is command-line configuration, not state.
         values.pop('matrix_node_name', None)
         values.setdefault('matrix_size', 16)
-        values.setdefault('matrix_start_universe', 0)
+        values.setdefault('matrix_artnet', {'port_address': 0})
+        values.setdefault('matrix_sacn', {'universe': 1})
+        values.setdefault('matrix_protocol', 'artnet')
         values.setdefault('matrix_channels_per_universe', 510)
         values.setdefault('matrix_start_address', 1)
-        artnet.validate_config(values['matrix_size'], values['matrix_start_universe'],
+        artnet_port = validate_matrix_protocol_config(values['matrix_artnet'], 'port_address', 'Art-Net')
+        sacn_universe = validate_matrix_protocol_config(values['matrix_sacn'], 'universe', 'sACN')
+        artnet.validate_config(values['matrix_size'], artnet_port,
                                values['matrix_channels_per_universe'], values['matrix_start_address'])
+        sacn_receiver.validate_config(values['matrix_size'], sacn_universe,
+                             values['matrix_channels_per_universe'], values['matrix_start_address'])
+        if values['matrix_protocol'] not in ('artnet', 'sacn'):
+            raise ValueError('unknown Network Matrix protocol')
         if set(values) != set(AppState.persisted_keys()):
             raise ValueError('unexpected or missing fields')
         if values['effect'] not in effect_ids:
@@ -828,15 +878,20 @@ def main():
                         help='Seconds to retain DMX values after signal loss')
     parser.add_argument('--artnet-debug', action='store_true',
                         help='Log ArtNet reception and framebuffer diagnostics once per second')
+    parser.add_argument('--sacn-debug', action='store_true',
+                        help='Log sACN reception and framebuffer diagnostics once per second')
     parser.add_argument('--artnet-name', type=artnet.validate_node_name, default='fbmserve',
                         help='Advertised Art-Net node name (default: fbmserve)')
     parser.add_argument('--artnet-poll-broadcast', action='store_true',
                         help='TEST ONLY: broadcast ArtPollReply packets to 255.255.255.255')
     args = parser.parse_args()
-    if args.artnet_debug:
+    if args.artnet_debug or args.sacn_debug:
         logging.basicConfig(level=logging.WARNING,
                             format='%(asctime)s %(name)s: %(message)s')
+    if args.artnet_debug:
         artnet.logger.setLevel(logging.DEBUG)
+    if args.sacn_debug:
+        sacn_receiver.logger.setLevel(logging.DEBUG)
     if sys.platform == 'win32' and args.dmx_start is not None:
         parser.error('DMX input is not supported on Windows')
     if args.dmx_start is not None and not 1 <= args.dmx_start <= 513 - DMX_CHANNELS:

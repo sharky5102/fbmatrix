@@ -22,7 +22,7 @@ def packet(universe=0, data=b"\x01\x02\x03\x04", opcode=0x5000):
 
 @pytest.mark.parametrize("size,count", [(16, 2), (32, 7), (64, 25)])
 def test_universe_mapping(size, count):
-    buffer = artnet.PixelBuffer(size, 256)
+    buffer = artnet.ArtDmxBuffer(size, 256)
     assert buffer.universes == count
     assert buffer.update(packet(256, bytes([11]) * 512))
     assert buffer.update(packet(257, bytes([22]) * 512))
@@ -40,14 +40,14 @@ def test_universe_mapping(size, count):
     packet(opcode=0x5300), packet(2), packet(32768),
     b"Bad-Net\0" + packet()[8:], packet()[:10] + b"\0\x0d" + packet()[12:]])
 def test_invalid_packets_do_not_change_pixels(bad):
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     assert not buffer.update(bad)
     assert buffer.snapshot()[0] == bytes(16 * 16 * 3)
     assert buffer.packets == 0
 
 
 def test_partial_updates_preserve_other_channels_and_universes():
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     buffer.update(packet(0, bytes([9]) * 510))
     buffer.update(packet(1, bytes([8]) * 258))
     buffer.update(packet(0, b"\x01\x02"))
@@ -83,7 +83,7 @@ def test_renderer_uploads_once_per_frame_and_reconfigures():
         factory.assert_called_once_with(16, 0, channels_per_universe=510, start_address=1, poll_broadcast=False, node_name='fbmserve')
         assert renderer.network_quad.setRGB.call_count == 2
         assert renderer.network_quad.render.call_count == 2
-        state.update(matrix_size=32, matrix_start_universe=10)
+        state.update(matrix_size=32, matrix_artnet={'port_address': 10})
         renderer.render()
         factory.assert_called_with(32, 10, channels_per_universe=510, start_address=1, poll_broadcast=False, node_name='fbmserve')
         assert receiver.close.call_count == 1
@@ -111,7 +111,8 @@ def test_invalid_configuration(size, start):
 
 
 def test_state_migration_and_persistence(tmp_path):
-    state = fbmserve.AppState('solid', matrix_size=64, matrix_start_universe=100)
+    state = fbmserve.AppState('solid', matrix_size=64,
+                              matrix_artnet={'port_address': 100})
     saved = {key: state.snapshot()[key] for key in state.persisted_keys()}
     path = tmp_path / 'state.json'
     path.write_text(json.dumps(saved))
@@ -119,26 +120,29 @@ def test_state_migration_and_persistence(tmp_path):
     saved['matrix_node_name'] = 'old saved name'
     del saved['matrix_channels_per_universe']
     del saved['matrix_size']
-    del saved['matrix_start_universe']
+    del saved['matrix_artnet']
     path.write_text(json.dumps(saved))
     loaded = fbmserve.load_state_file(path, {'solid'}, {'default'})
     assert 'matrix_node_name' not in loaded
     assert loaded['matrix_channels_per_universe'] == 510
     assert loaded['matrix_size'] == 16
-    assert loaded['matrix_start_universe'] == 0
+    assert loaded['matrix_artnet'] == {'port_address': 0}
 
 
 def test_api_configuration():
     handler = object.__new__(fbmserve.RequestHandler)
     handler.server = mock.Mock(app_state=fbmserve.AppState('solid'))
     assert handler.normalize_state({'input_mode': 'network_matrix', 'matrix_size': 32}) == {
-        'input_mode': 'network_matrix', 'matrix_size': 32, 'matrix_start_universe': 0, 'matrix_channels_per_universe': 510, 'matrix_start_address': 1}
+        'input_mode': 'network_matrix', 'matrix_size': 32,
+        'matrix_artnet': {'port_address': 0}, 'matrix_sacn': {'universe': 1},
+        'matrix_protocol': 'artnet',
+        'matrix_channels_per_universe': 510, 'matrix_start_address': 1}
     with pytest.raises(ValueError):
-        handler.normalize_state({'matrix_start_universe': 32767})
+        handler.normalize_state({'matrix_artnet': {'port_address': 32767}})
 
 
 def test_diagnostic_rejection_reasons():
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     buffer.update(packet(12))
     buffer.update(packet()[:-1])
     buffer.update(packet(opcode=0x5200))
@@ -151,7 +155,7 @@ def test_diagnostic_rejection_reasons():
 
 def test_debug_report_is_throttled_and_reports_buffer(caplog):
     receiver = object.__new__(artnet.Receiver)
-    artnet.PixelBuffer.__init__(receiver)
+    artnet.ArtDmxBuffer.__init__(receiver)
     receiver.next_debug = 0
     receiver.last_datagram = 'test sender'
     receiver.seen_universes = {0, 12}
@@ -170,7 +174,7 @@ def test_debug_report_is_throttled_and_reports_buffer(caplog):
 
 @pytest.mark.parametrize('size,count', [(16, 2), (32, 6), (64, 24)])
 def test_continuous_512_channel_packing(size, count):
-    buffer = artnet.PixelBuffer(size, 10, channels_per_universe=512)
+    buffer = artnet.ArtDmxBuffer(size, 10, channels_per_universe=512)
     expected = bytes(i % 251 for i in range(size * size * 3))
     assert buffer.universes == count
     # Reverse packet order also reconstructs pixels spanning two universes.
@@ -205,14 +209,14 @@ def test_packing_changes_restart_receiver():
 
 @pytest.mark.parametrize('bad', [sync_packet()[:13], sync_packet()[:8] + b'badbad'])
 def test_invalid_sync_packets_are_ignored(bad):
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     assert not buffer.update(bad, source='10.0.0.1')
     assert buffer.last_sync is None
     assert buffer.snapshot()[0] == bytes(768)
 
 
 def test_artsync_publishes_all_received_universes_together():
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     source = '10.0.0.1'
     first = packet(0, bytes([10]) * 510)
     second = packet(1, bytes([20]) * 258)
@@ -234,7 +238,7 @@ def test_artsync_publishes_all_received_universes_together():
 
 
 def test_artsync_partial_frame_preserves_unsent_universes():
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     source = '10.0.0.1'
     buffer.update(packet(0, bytes([10]) * 510), source)
     buffer.update(packet(1, bytes([20]) * 258), source)
@@ -249,7 +253,7 @@ def test_artsync_partial_frame_preserves_unsent_universes():
 
 
 def test_artsync_from_other_controller_is_ignored():
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     buffer.update(packet(0, bytes([1]) * 510), source='10.0.0.1')
     buffer.update(sync_packet(), source='10.0.0.1')
     buffer.update(packet(0, bytes([2]) * 510), source='10.0.0.1')
@@ -261,7 +265,7 @@ def test_artsync_from_other_controller_is_ignored():
 
 
 def test_missing_artsync_for_four_seconds_returns_to_immediate_mode():
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     source = '10.0.0.1'
     now = [0.0]
     with mock.patch.object(artnet.time, 'monotonic', side_effect=lambda: now[0]):
@@ -280,7 +284,7 @@ def test_missing_artsync_for_four_seconds_returns_to_immediate_mode():
 
 
 def test_artsync_resumes_after_timeout_from_current_visible_frame():
-    buffer = artnet.PixelBuffer()
+    buffer = artnet.ArtDmxBuffer()
     source = '10.0.0.1'
     now = [0.0]
     with mock.patch.object(artnet.time, 'monotonic', side_effect=lambda: now[0]):
@@ -369,7 +373,7 @@ def test_targeted_poll_only_replies_when_range_intersects_matrix():
 
 def test_receiver_answers_artpoll_with_unicast_poll_replies():
     receiver = object.__new__(artnet.Receiver)
-    artnet.PixelBuffer.__init__(receiver, 64, 14, 510, 1)
+    artnet.ArtDmxBuffer.__init__(receiver, 64, 14, 510, 1)
     receiver.socket = mock.Mock()
     receiver.poll_broadcast = False
     route = mock.MagicMock()
@@ -389,7 +393,7 @@ def test_receiver_answers_artpoll_with_unicast_poll_replies():
 
 def test_receiver_respects_targeted_artpoll_and_rejects_short_requests():
     receiver = object.__new__(artnet.Receiver)
-    artnet.PixelBuffer.__init__(receiver, 16, 10, 510, 1)
+    artnet.ArtDmxBuffer.__init__(receiver, 16, 10, 510, 1)
     receiver.socket = mock.Mock()
     receiver.poll_broadcast = False
     route = mock.MagicMock()
@@ -411,7 +415,7 @@ def test_receiver_respects_targeted_artpoll_and_rejects_short_requests():
 
 def test_broadcast_poll_reply_targets_limited_broadcast():
     receiver = object.__new__(artnet.Receiver)
-    artnet.PixelBuffer.__init__(receiver)
+    artnet.ArtDmxBuffer.__init__(receiver)
     receiver.poll_broadcast = True
     receiver.socket = mock.Mock()
     route = mock.MagicMock()

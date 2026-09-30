@@ -7,9 +7,9 @@ the selected channel packing are our matrix profile, not requirements of Art-Net
 import logging
 import ipaddress
 import socket
-from collections import Counter
 import threading
 import time
+from matrix_buffer import PixelBuffer, universe_count
 
 logger = logging.getLogger(__name__)
 
@@ -30,18 +30,7 @@ RGB_CHANNELS_PER_UNIVERSE = PIXELS_PER_UNIVERSE * 3
 
 
 def validate_config(size, start_universe, channels_per_universe=510, start_address=1):
-    if type(size) is not int or size not in (16, 32, 64):
-        raise ValueError('Matrix size must be 16, 32 or 64')
-    if type(channels_per_universe) is not int or channels_per_universe not in (510, 512):
-        raise ValueError('Channels per universe must be 510 or 512')
-    if (type(start_address) is not int or
-            not 1 <= start_address <= channels_per_universe):
-        raise ValueError('Start address must be within the selected universe channel range')
-    first_capacity = channels_per_universe - start_address + 1
-    if first_capacity <= 0:
-        raise ValueError('Start address is beyond the selected universe channel range')
-    remaining = max(0, size * size * 3 - first_capacity)
-    count = 1 + (remaining + channels_per_universe - 1) // channels_per_universe
+    count = universe_count(size, channels_per_universe, start_address)
     if type(start_universe) is not int or not 0 <= start_universe <= 32768 - count:
         raise ValueError('Matrix universe range must fit within 0 to 32767')
     return count
@@ -114,24 +103,22 @@ def build_poll_replies(ip_address, size, start_universe, channels_per_universe,
     return packets
 
 
-class PixelBuffer:
+class ArtDmxBuffer(PixelBuffer):
     def __init__(self, size=16, start_universe=0, channels_per_universe=510,
                  start_address=1, node_name='fbmserve'):
-        self.universes = validate_config(size, start_universe, channels_per_universe, start_address)
+        validate_config(size, start_universe, channels_per_universe, start_address)
         self.node_name = validate_node_name(node_name)
-        self.channels_per_universe = channels_per_universe
-        self.start_address = start_address
-        self.size = size
-        self.start_universe = start_universe
-        self.pixels = bytearray(size * size * 3)
+        super().__init__(size, start_universe, channels_per_universe, start_address)
         self.staging_pixels = None
-        self.lock = threading.Lock()
-        self.packets = 0
-        self.last_packet = None
-        self.error = None
-        self.diagnostics = Counter()
         self.last_sync = None
         self.last_dmx_source = None
+
+    def _target_buffer_locked(self):
+        if self.last_sync is not None and time.monotonic() - self.last_sync < 4.0:
+            return self.staging_pixels
+        self.last_sync = None
+        self.staging_pixels = None
+        return self.pixels
 
     def update(self, packet, source=None):
         # ArtDmx's fixed header (byte offsets, end exclusive):
@@ -193,37 +180,22 @@ class PixelBuffer:
             return self._reject('truncated_payload')
         if not self.start_universe <= universe < self.start_universe + self.universes:
             return self._reject('outside_universe_range')
-        universe_offset = universe - self.start_universe
-        first_capacity = self.channels_per_universe - self.start_address + 1
-        offset = (first_capacity + (universe_offset - 1) * self.channels_per_universe
-                  if universe_offset else 0)
         # 510 mode leaves channels 511/512 unused, keeping RGB pixels intact.
         # 512 mode packs all channels continuously, allowing pixels to span
         # universes (e.g. R/G at 511/512, B at channel 1). Clip the final universe to
         # the matrix size, and retain untouched channels on partial updates.
-        channel_offset = self.start_address - 1 if universe_offset == 0 else 0
-        capacity = first_capacity if universe_offset == 0 else self.channels_per_universe
-        count = min(max(0, length - channel_offset), capacity, len(self.pixels) - offset)
-        with self.lock:
-            # Art-Net returns to immediate mode after four seconds without sync.
-            # Start the next synchronized frame from the last displayed pixels,
-            # so universes omitted from a partial update retain their values.
-            if self.last_sync is not None and time.monotonic() - self.last_sync < 4.0:
-                target = self.staging_pixels
-            else:
-                target = self.pixels
-                self.last_sync = None
-                self.staging_pixels = None
-            target[offset:offset + count] = packet[DMX_HEADER_SIZE + channel_offset:DMX_HEADER_SIZE + channel_offset + count]
-            self.packets += 1
-            self.diagnostics['accepted'] += 1
-            self.last_packet = time.monotonic()
-            if source is not None:
+        channel_offset = self.start_address - 1 if universe == self.start_universe else 0
+        accepted = self.update_channels(
+            universe, packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length],
+            channel_offset=channel_offset)
+        if accepted and source is not None:
+            with self.lock:
                 self.last_dmx_source = source
-        return True
+        return accepted
 
     def _reject(self, reason):
-        self.diagnostics[reason] += 1
+        with self.lock:
+            self.diagnostics[reason] += 1
         return False
 
     def snapshot(self):
@@ -235,7 +207,7 @@ class PixelBuffer:
             }
 
 
-class Receiver(PixelBuffer):
+class Receiver(ArtDmxBuffer):
     def __init__(self, size=16, start_universe=0, host='0.0.0.0', port=PORT,
                  channels_per_universe=510, start_address=1, poll_broadcast=False,
                  node_name='fbmserve'):

@@ -270,6 +270,10 @@ label {
   gap: 10px;
 }
 
+label[hidden] {
+  display: none;
+}
+
 label span {
   color: var(--muted);
   font-size: 13px;

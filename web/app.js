@@ -20,7 +20,9 @@ const state = {
   matrix_size: 16,
   matrix_channels_per_universe: 510,
   matrix_start_address: 1,
-  matrix_start_universe: 0,
+  matrix_artnet: { port_address: 0 },
+  matrix_sacn: { universe: 1 },
+  matrix_protocol: 'artnet',
   matrix_status: {},
 };
 
@@ -54,7 +56,9 @@ const modeNetworkEl = document.getElementById('mode-network');
 const matrixChannelsEl = document.getElementById('matrix-channels');
 const matrixSizeEl = document.getElementById('matrix-size');
 const matrixAddressEl = document.getElementById('matrix-address');
-const matrixStartEl = document.getElementById('matrix-start');
+const matrixProtocolEl = document.getElementById('matrix-protocol');
+const matrixStartEl = document.getElementById('matrix-artnet-universe');
+const matrixSacnStartEl = document.getElementById('matrix-sacn-universe');
 const matrixStatusEl = document.getElementById('matrix-status');
 const matrixErrorEl = document.getElementById('matrix-error');
 const modeNdiEl = document.getElementById('mode-ndi');
@@ -169,17 +173,25 @@ function renderControls() {
   document.getElementById('network-panel').hidden = !networkMode;
   matrixSizeEl.value = state.matrix_size;
   matrixChannelsEl.value = state.matrix_channels_per_universe;
+  matrixProtocolEl.value = state.matrix_protocol;
   const firstUniverseCapacity = state.matrix_channels_per_universe - state.matrix_start_address + 1;
   const remainingChannels = Math.max(0, state.matrix_size ** 2 * 3 - firstUniverseCapacity);
   const universeCount = 1 + Math.ceil(remainingChannels / state.matrix_channels_per_universe);
   matrixStartEl.max = 32768 - universeCount;
-  if (document.activeElement !== matrixStartEl) matrixStartEl.value = state.matrix_start_universe;
+  matrixSacnStartEl.max = 63999 - universeCount + 1;
+  if (document.activeElement !== matrixStartEl) matrixStartEl.value = state.matrix_artnet.port_address;
+  if (document.activeElement !== matrixSacnStartEl) matrixSacnStartEl.value = state.matrix_sacn.universe;
+  document.getElementById('matrix-artnet-universe-label').hidden = state.matrix_protocol !== 'artnet';
+  document.getElementById('matrix-sacn-universe-label').hidden = state.matrix_protocol !== 'sacn';
+  document.getElementById('matrix-protocol-help').textContent = state.matrix_protocol === 'sacn'
+    ? 'RGB, left to right, top to bottom. Match channel packing to your sender. sACN uses UDP port 5568 and universe multicast.'
+    : 'RGB, left to right, top to bottom. Match channel packing to your sender. Art-Net uses UDP port 6454.';
   if (document.activeElement !== matrixAddressEl) matrixAddressEl.value = state.matrix_start_address;
   matrixAddressEl.max = state.matrix_channels_per_universe;
   const stats = state.matrix_status || {};
   matrixStatusEl.textContent = stats.packets
     ? `${stats.packets} packets / ${stats.age < 2 ? 'Receiving' : 'Signal lost; holding pixels'}`
-    : 'Waiting for ArtNet';
+    : `Waiting for ${state.matrix_protocol === 'sacn' ? 'sACN' : 'Art-Net'}`;
   matrixErrorEl.hidden = !state.error;
   matrixErrorEl.textContent = state.error || '';
   modeNdiEl.classList.toggle('active', ndiMode);
@@ -242,7 +254,7 @@ function setOnline(online, message) {
 }
 
 function currentStatus() {
-  if (state.input_mode === 'network_matrix') return `ArtNet / ${state.matrix_size} x ${state.matrix_size}`;
+  if (state.input_mode === 'network_matrix') return `${state.matrix_protocol === 'sacn' ? 'sACN' : 'Art-Net'} / ${state.matrix_size} x ${state.matrix_size}`;
   if (state.input_mode === 'ndi') {
     if (!state.ndi_source) return 'Select an NDI source';
     return state.ndi_source;
@@ -530,8 +542,16 @@ matrixChannelsEl.addEventListener('change', () => {
 });
 matrixSizeEl.addEventListener('change', () => updateState({ matrix_size: Number(matrixSizeEl.value) }));
 matrixStartEl.addEventListener('change', () => {
-  if (matrixStartEl.reportValidity()) updateState({ matrix_start_universe: Number(matrixStartEl.value) });
+  if (matrixStartEl.reportValidity()) updateState({
+    matrix_artnet: { ...state.matrix_artnet, port_address: Number(matrixStartEl.value) },
+  });
 });
+matrixSacnStartEl.addEventListener('change', () => {
+  if (matrixSacnStartEl.reportValidity()) updateState({
+    matrix_sacn: { ...state.matrix_sacn, universe: Number(matrixSacnStartEl.value) },
+  });
+});
+matrixProtocolEl.addEventListener('change', () => updateState({ matrix_protocol: matrixProtocolEl.value }));
 modeEffectEl.addEventListener('click', () => updateState({ input_mode: 'effect' }));
 modeNdiEl.addEventListener('click', () => updateState({ input_mode: 'ndi' }));
 ndiSourceEl.addEventListener('change', () => {
