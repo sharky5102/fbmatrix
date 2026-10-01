@@ -9,12 +9,21 @@ import pytest
 
 import artnet
 from matrix_buffer import PixelBuffer
+from channel_mapping import ChannelMapping
 from fbmserve import validate_matrix_config as validate_config
 import fbmserve
 
 
+def matrix_mapping(size=16, start_universe=0, channels_per_universe=510,
+                   start_address=1, sink=None):
+    sink = sink or PixelBuffer(size)
+    return ChannelMapping(sink.channel_count, channels_per_universe, start_universe,
+                          start_address, sink)
+
+
 def matrix_input(size=16, start_universe=0, channels_per_universe=510, start_address=1):
-    return artnet.ArtDmxInput(PixelBuffer(size), start_universe, channels_per_universe, start_address)
+    return artnet.ArtDmxInput([matrix_mapping(size, start_universe,
+                                              channels_per_universe, start_address)])
 
 
 def matrix_replies(ip, size, start, channels, address, targeted_range=None, node_name='fbmserve'):
@@ -35,16 +44,17 @@ def packet(universe=0, data=b"\x01\x02\x03\x04", opcode=0x5000):
 @pytest.mark.parametrize("size,count", [(16, 2), (32, 7), (64, 25)])
 def test_universe_mapping(size, count):
     buffer = matrix_input(size, 256)
-    assert buffer.mapping.universes == count
+    assert buffer.mappings[0].universes == count
     assert buffer.update(packet(256, bytes([11]) * 512))
     assert buffer.update(packet(257, bytes([22]) * 512))
-    pixels, stats = buffer.buffer.snapshot()
+    pixels = buffer.mappings[0].sink.snapshot()
+    stats = buffer.status()
     assert pixels[:510] == bytes([11]) * 510
     assert pixels[510:min(1020, len(pixels))] == bytes([22]) * min(510, len(pixels)-510)
     assert len(pixels) == size * size * 3
     assert stats['packets'] == 2
     assert buffer.update(packet(256 + count - 1, bytes([33]) * 512))
-    assert buffer.buffer.snapshot()[0][-3:] == bytes([33]) * 3
+    assert buffer.mappings[0].sink.snapshot()[-3:] == bytes([33]) * 3
 
 
 @pytest.mark.parametrize("bad", [b"", packet()[:17], packet()[:-1],
@@ -54,8 +64,8 @@ def test_universe_mapping(size, count):
 def test_invalid_packets_do_not_change_pixels(bad):
     buffer = matrix_input()
     assert not buffer.update(bad)
-    assert buffer.buffer.snapshot()[0] == bytes(16 * 16 * 3)
-    assert buffer.buffer.packets == 0
+    assert buffer.mappings[0].sink.snapshot() == bytes(16 * 16 * 3)
+    assert buffer.packets == 0
 
 
 def test_partial_updates_preserve_other_channels_and_universes():
@@ -63,20 +73,20 @@ def test_partial_updates_preserve_other_channels_and_universes():
     buffer.update(packet(0, bytes([9]) * 510))
     buffer.update(packet(1, bytes([8]) * 258))
     buffer.update(packet(0, b"\x01\x02"))
-    pixels, _ = buffer.buffer.snapshot()
+    pixels = buffer.mappings[0].sink.snapshot()
     assert pixels[:4] == b"\x01\x02\x09\x09"
     assert pixels[510:] == bytes([8]) * 258
 
 
 def test_udp_receiver_and_shutdown():
-    receiver = artnet.Receiver(PixelBuffer(16), start_universe=0, channels_per_universe=510, start_address=1, port=0, host='127.0.0.1')
+    receiver = artnet.Receiver([matrix_mapping(16, 0, 510, 1)], port=0, host='127.0.0.1')
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
             sender.sendto(packet(), receiver.socket.getsockname())
         deadline = time.monotonic() + 2
-        while receiver.buffer.snapshot()[1]['packets'] == 0 and time.monotonic() < deadline:
+        while receiver.status()['packets'] == 0 and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert receiver.buffer.snapshot()[0][:4] == b"\x01\x02\x03\x04"
+        assert receiver.mappings[0].sink.snapshot()[:4] == b"\x01\x02\x03\x04"
     finally:
         receiver.close()
     assert not receiver.thread.is_alive()
@@ -91,12 +101,12 @@ def test_renderer_uploads_once_per_frame_and_reconfigures():
     with mock.patch.object(artnet, 'Receiver', return_value=receiver) as factory:
         renderer.render()
         renderer.render()
-        factory.assert_called_once_with(renderer.network_buffer, start_universe=0, channels_per_universe=510, start_address=1, poll_broadcast=False, node_name='fbmserve', description='fbmserve 16x16 u0 510ch/univ addr1')
+        factory.assert_called_once(); assert factory.call_args.kwargs['poll_broadcast'] is False; assert factory.call_args.args[0][0].sink is renderer.network_buffer
         assert renderer.network_quad.setRGB.call_count == 2
         assert renderer.network_quad.render.call_count == 2
         state.update(matrix_size=32, matrix_artnet={'port_address': 10})
         renderer.render()
-        factory.assert_called_with(renderer.network_buffer, start_universe=10, channels_per_universe=510, start_address=1, poll_broadcast=False, node_name='fbmserve', description='fbmserve 32x32 u10 510ch/univ addr1')
+        factory.assert_called_with(mock.ANY, poll_broadcast=False, node_name='fbmserve', description='fbmserve 32x32 u10 510ch/univ addr1'); assert factory.call_args.args[0][0].sink is renderer.network_buffer
         assert receiver.close.call_count == 1
         state.update(input_mode='ndi')
         renderer.render()
@@ -158,7 +168,7 @@ def test_diagnostic_rejection_reasons():
     buffer.update(packet()[:-1])
     buffer.update(packet(opcode=0x5200))
     buffer.update(packet())
-    assert buffer.buffer.diagnostics == {
+    assert buffer.diagnostics == {
         'outside_universe_range': 1, 'truncated_payload': 1,
         'sync': 1, 'accepted': 1,
     }
@@ -166,7 +176,7 @@ def test_diagnostic_rejection_reasons():
 
 def test_debug_report_is_throttled_and_reports_counters(caplog):
     receiver = object.__new__(artnet.Receiver)
-    artnet.ArtDmxInput.__init__(receiver, PixelBuffer(16), start_universe=0, channels_per_universe=510, start_address=1)
+    artnet.ArtDmxInput.__init__(receiver, [matrix_mapping(16, 0, 510, 1)])
     receiver.next_debug = 0
     receiver.last_datagram = 'test sender'
     receiver.seen_universes = {0, 12}
@@ -187,13 +197,13 @@ def test_debug_report_is_throttled_and_reports_counters(caplog):
 def test_continuous_512_channel_packing(size, count):
     buffer = matrix_input(size, 10, channels_per_universe=512)
     expected = bytes(i % 251 for i in range(size * size * 3))
-    assert buffer.mapping.universes == count
+    assert buffer.mappings[0].universes == count
     # Reverse packet order also reconstructs pixels spanning two universes.
     for index in reversed(range(count)):
         data = expected[index * 512:(index + 1) * 512]
         assert buffer.update(packet(10 + index, data.ljust(512, b'\0')))
-    assert buffer.buffer.snapshot()[0] == expected
-    assert buffer.buffer.snapshot()[0][510:513] == expected[510:513]
+    assert buffer.mappings[0].sink.snapshot() == expected
+    assert buffer.mappings[0].sink.snapshot()[510:513] == expected[510:513]
     assert not buffer.update(packet(10 + count))
 
 
@@ -213,7 +223,7 @@ def test_packing_changes_restart_receiver():
         state.update(matrix_channels_per_universe=512)
         renderer.render()
         receiver.close.assert_called_once()
-        factory.assert_called_with(renderer.network_buffer, start_universe=0, channels_per_universe=512, start_address=1, poll_broadcast=False, node_name='fbmserve', description='fbmserve 16x16 u0 512ch/univ addr1')
+        factory.assert_called_with(mock.ANY, poll_broadcast=False, node_name='fbmserve', description='fbmserve 16x16 u0 512ch/univ addr1'); assert factory.call_args.args[0][0].sink is renderer.network_buffer
     renderer.close()
 
 
@@ -222,7 +232,7 @@ def test_invalid_sync_packets_are_ignored(bad):
     buffer = matrix_input()
     assert not buffer.update(bad, source='10.0.0.1')
     assert buffer.last_sync is None
-    assert buffer.buffer.snapshot()[0] == bytes(768)
+    assert buffer.mappings[0].sink.snapshot() == bytes(768)
 
 
 def test_artsync_publishes_all_received_universes_together():
@@ -232,19 +242,19 @@ def test_artsync_publishes_all_received_universes_together():
     second = packet(1, bytes([20]) * 258)
     assert buffer.update(first, source)
     # Before the first ArtSync, DMX is applied immediately.
-    assert buffer.buffer.snapshot()[0][:510] == bytes([10]) * 510
+    assert buffer.mappings[0].sink.snapshot()[:510] == bytes([10]) * 510
     assert buffer.update(sync_packet(), source)
     assert buffer.update(packet(0, bytes([30]) * 510), source)
     assert buffer.update(packet(1, bytes([40]) * 258), source)
     # Neither universe is visible until the sync packet publishes the frame.
-    visible, _ = buffer.buffer.snapshot()
+    visible = buffer.mappings[0].sink.snapshot()
     assert visible[:510] == bytes([10]) * 510
     assert visible[510:] == bytes([0]) * 258
     assert buffer.update(sync_packet(), source)
-    visible, _ = buffer.buffer.snapshot()
+    visible = buffer.mappings[0].sink.snapshot()
     assert visible[:510] == bytes([30]) * 510
     assert visible[510:] == bytes([40]) * 258
-    assert buffer.buffer.diagnostics['sync'] == 2
+    assert buffer.diagnostics['sync'] == 2
 
 
 def test_artsync_partial_frame_preserves_unsent_universes():
@@ -257,7 +267,7 @@ def test_artsync_partial_frame_preserves_unsent_universes():
     buffer.update(sync_packet(), source)
     buffer.update(packet(0, bytes([40]) * 510), source)
     buffer.update(sync_packet(), source)
-    visible, _ = buffer.buffer.snapshot()
+    visible = buffer.mappings[0].sink.snapshot()
     assert visible[:510] == bytes([40]) * 510
     assert visible[510:] == bytes([20]) * 258
 
@@ -268,10 +278,10 @@ def test_artsync_from_other_controller_is_ignored():
     buffer.update(sync_packet(), source='10.0.0.1')
     buffer.update(packet(0, bytes([2]) * 510), source='10.0.0.1')
     assert not buffer.update(sync_packet(), source='10.0.0.2')
-    assert buffer.buffer.snapshot()[0][:510] == bytes([1]) * 510
-    assert buffer.buffer.diagnostics['sync_source_mismatch'] == 1
+    assert buffer.mappings[0].sink.snapshot()[:510] == bytes([1]) * 510
+    assert buffer.diagnostics['sync_source_mismatch'] == 1
     assert buffer.update(sync_packet(), source='10.0.0.1')
-    assert buffer.buffer.snapshot()[0][:510] == bytes([2]) * 510
+    assert buffer.mappings[0].sink.snapshot()[:510] == bytes([2]) * 510
 
 
 def test_missing_artsync_for_four_seconds_returns_to_immediate_mode():
@@ -283,14 +293,14 @@ def test_missing_artsync_for_four_seconds_returns_to_immediate_mode():
         buffer.update(sync_packet(), source)
         now[0] = 1.0
         buffer.update(packet(0, bytes([2]) * 510), source)
-        assert buffer.buffer.snapshot()[0][:510] == bytes([1]) * 510
+        assert buffer.mappings[0].sink.snapshot()[:510] == bytes([1]) * 510
         now[0] = 4.999  # More than four seconds since the last ArtSync.
         buffer.update(packet(0, bytes([3]) * 510), source)
-        assert buffer.buffer.snapshot()[0][:510] == bytes([3]) * 510
+        assert buffer.mappings[0].sink.snapshot()[:510] == bytes([3]) * 510
         assert buffer.last_sync is None
-        assert buffer.buffer.staging_pixels is None
+        assert buffer.mappings[0].sink.staging_pixels is None
         buffer.update(packet(0, bytes([4]) * 510), source)
-        assert buffer.buffer.snapshot()[0][:510] == bytes([4]) * 510
+        assert buffer.mappings[0].sink.snapshot()[:510] == bytes([4]) * 510
 
 
 def test_artsync_resumes_after_timeout_from_current_visible_frame():
@@ -304,14 +314,14 @@ def test_artsync_resumes_after_timeout_from_current_visible_frame():
         buffer.update(packet(0, bytes([2]) * 510), source)
         now[0] = 5.0
         buffer.update(packet(0, bytes([3]) * 510), source)
-        assert buffer.buffer.snapshot()[0][:510] == bytes([3]) * 510
+        assert buffer.mappings[0].sink.snapshot()[:510] == bytes([3]) * 510
         # First sync after timeout restarts synchronization from visible pixels.
         buffer.update(sync_packet(), source)
         now[0] = 5.1
         buffer.update(packet(0, bytes([4]) * 510), source)
-        assert buffer.buffer.snapshot()[0][:510] == bytes([3]) * 510
+        assert buffer.mappings[0].sink.snapshot()[:510] == bytes([3]) * 510
         buffer.update(sync_packet(), source)
-        assert buffer.buffer.snapshot()[0][:510] == bytes([4]) * 510
+        assert buffer.mappings[0].sink.snapshot()[:510] == bytes([4]) * 510
 
 
 @pytest.mark.parametrize('start,count,expected', [
@@ -383,7 +393,7 @@ def test_targeted_poll_only_replies_when_range_intersects_matrix():
 
 def test_receiver_answers_artpoll_with_unicast_poll_replies():
     receiver = object.__new__(artnet.Receiver)
-    artnet.ArtDmxInput.__init__(receiver, PixelBuffer(64), start_universe=14, channels_per_universe=510, start_address=1)
+    artnet.ArtDmxInput.__init__(receiver, [matrix_mapping(64, 14, 510, 1)])
     receiver.node_name = 'fbmserve'
     receiver.description = None
     receiver.socket = mock.Mock()
@@ -399,13 +409,13 @@ def test_receiver_answers_artpoll_with_unicast_poll_replies():
     assert receiver.socket.sendto.call_count == 7
     assert all(call.args[1] == ('192.0.2.20', 6454)
                for call in receiver.socket.sendto.call_args_list)
-    assert receiver.buffer.diagnostics['poll'] == 1
-    assert receiver.buffer.diagnostics['poll_replies'] == 7
+    assert receiver.diagnostics['poll'] == 1
+    assert receiver.diagnostics['poll_replies'] == 7
 
 
 def test_receiver_respects_targeted_artpoll_and_rejects_short_requests():
     receiver = object.__new__(artnet.Receiver)
-    artnet.ArtDmxInput.__init__(receiver, PixelBuffer(16), start_universe=10, channels_per_universe=510, start_address=1)
+    artnet.ArtDmxInput.__init__(receiver, [matrix_mapping(16, 10, 510, 1)])
     receiver.node_name = 'fbmserve'
     receiver.description = None
     receiver.socket = mock.Mock()
@@ -422,14 +432,14 @@ def test_receiver_respects_targeted_artpoll_and_rejects_short_requests():
         targeted[16:18] = (8).to_bytes(2, 'big')
         assert receiver.respond_to_poll(bytes(targeted), ('192.0.2.20', 6454))
     receiver.socket.sendto.assert_not_called()
-    assert receiver.buffer.diagnostics['short_poll'] == 1
-    assert receiver.buffer.diagnostics['poll_replies'] == 0
+    assert receiver.diagnostics['short_poll'] == 1
+    assert receiver.diagnostics['poll_replies'] == 0
 
 
 
 def test_broadcast_poll_reply_targets_limited_broadcast():
     receiver = object.__new__(artnet.Receiver)
-    artnet.ArtDmxInput.__init__(receiver, PixelBuffer(16), start_universe=0, channels_per_universe=510, start_address=1)
+    artnet.ArtDmxInput.__init__(receiver, [matrix_mapping(16, 0, 510, 1)])
     receiver.poll_broadcast = True
     receiver.node_name = 'fbmserve'
     receiver.description = None
@@ -445,7 +455,7 @@ def test_broadcast_poll_reply_targets_limited_broadcast():
 
 
 def test_broadcast_receiver_enables_udp_broadcast():
-    receiver = artnet.Receiver(PixelBuffer(16), start_universe=0, channels_per_universe=510, start_address=1, port=0, host='127.0.0.1', poll_broadcast=True)
+    receiver = artnet.Receiver([matrix_mapping(16, 0, 510, 1)], port=0, host='127.0.0.1', poll_broadcast=True)
     try:
         assert receiver.socket.getsockopt(
             socket.SOL_SOCKET, socket.SO_BROADCAST) == 1
@@ -467,7 +477,7 @@ def test_poll_reply_uses_configured_node_name():
 
 def test_receiver_delivers_untrimmed_channels_to_non_pixel_sink():
     sink = mock.MagicMock(channel_count=512)
-    receiver = artnet.Receiver(sink, start_universe=10, channels_per_universe=512, port=0, host='127.0.0.1')
+    receiver = artnet.Receiver([matrix_mapping(16, 10, 512, sink=sink)], port=0, host='127.0.0.1')
     try:
         channels = bytes(range(256)) * 2
         assert receiver.update(packet(10, channels))
@@ -485,7 +495,7 @@ def test_start_address_applies_only_to_first_universe(packing):
     receiver = matrix_input(16, 10, packing, 4)
     receiver.update(packet(10, bytes([9, 9, 9]) + bytes([1]) * 509))
     receiver.update(packet(11, bytes([2]) * 512))
-    pixels, _ = receiver.buffer.snapshot()
+    pixels = receiver.mappings[0].sink.snapshot()
     first_capacity = packing - 3
     assert pixels[:first_capacity] == bytes([1]) * first_capacity
     assert pixels[first_capacity:] == bytes([2]) * (768 - first_capacity)

@@ -6,7 +6,15 @@ import pytest
 import fbmserve
 import sacn_receiver
 from matrix_buffer import PixelBuffer
+from channel_mapping import ChannelMapping
 from fbmserve import validate_matrix_config as validate_config
+
+
+def matrix_mapping(size=16, start_universe=1, channels_per_universe=510,
+                   start_address=1, sink=None):
+    sink = sink or PixelBuffer(size)
+    return ChannelMapping(sink.channel_count, channels_per_universe, start_universe,
+                          start_address, sink)
 
 
 class FakeSyncSocket:
@@ -80,7 +88,7 @@ def test_sync_proxy_intercepts_sync_and_forwards_packets_to_library_handler():
 
 def test_receiver_subscribes_to_configured_universes_and_stops():
     with mock.patch.object(sacn_receiver.sacn, 'sACNreceiver') as factory:
-        receiver = sacn_receiver.Receiver(PixelBuffer(16), start_universe=20, start_address=1)
+        receiver = sacn_receiver.Receiver([matrix_mapping(16, 20, 510, 1)])
     library_receiver = factory.return_value
     assert library_receiver.register_listener.call_count == 2
     library_receiver.join_multicast.assert_any_call(20)
@@ -92,7 +100,7 @@ def test_receiver_subscribes_to_configured_universes_and_stops():
 
 def test_received_slots_update_matrix_buffer_and_ignore_other_start_codes():
     with mock.patch.object(sacn_receiver.sacn, 'sACNreceiver'):
-        receiver = sacn_receiver.Receiver(PixelBuffer(16), start_universe=1, start_address=4)
+        receiver = sacn_receiver.Receiver([matrix_mapping(16, 1, 510, 4)])
     try:
         receiver._on_packet(SimpleNamespace(
             universe=1, dmxStartCode=0, syncAddr=0, option_ForceSync=False,
@@ -100,32 +108,33 @@ def test_received_slots_update_matrix_buffer_and_ignore_other_start_codes():
         receiver._on_packet(SimpleNamespace(
             universe=1, dmxStartCode=1, syncAddr=0, option_ForceSync=False,
             dmxData=tuple([99] * 512)))
-        pixels, status = receiver.buffer.snapshot()
+        pixels = receiver.mappings[0].sink.snapshot()
+        status = receiver.status()
         assert pixels[:3] == bytes([10, 20, 30])
         assert status['packets'] == 1
-        assert receiver.buffer.diagnostics['unsupported_start_code'] == 1
+        assert receiver.diagnostics['unsupported_start_code'] == 1
     finally:
         receiver.close()
 
 
 def test_sync_address_holds_data_until_matching_sync_packet():
     with mock.patch.object(sacn_receiver.sacn, 'sACNreceiver'):
-        receiver = sacn_receiver.Receiver(PixelBuffer(16), start_universe=10, start_address=1)
+        receiver = sacn_receiver.Receiver([matrix_mapping(16, 10, 510, 1)])
     try:
         receiver._on_packet(data_packet(10, 100, 10))
-        assert receiver.buffer.snapshot()[0][0] == 10  # No sync stream has started yet.
+        assert receiver.mappings[0].sink.snapshot()[0] == 10  # No sync stream has started yet.
         receiver._on_sync(100, 1)
         receiver._on_packet(data_packet(10, 100, 20))
-        assert receiver.buffer.snapshot()[0][0] == 10
+        assert receiver.mappings[0].sink.snapshot()[0] == 10
         receiver._on_sync(100, 2)
-        assert receiver.buffer.snapshot()[0][0] == 20
+        assert receiver.mappings[0].sink.snapshot()[0] == 20
     finally:
         receiver.close()
 
 
 def test_force_sync_controls_behavior_after_sync_timeout():
     with mock.patch.object(sacn_receiver.sacn, 'sACNreceiver'):
-        receiver = sacn_receiver.Receiver(PixelBuffer(16), start_universe=10, start_address=1)
+        receiver = sacn_receiver.Receiver([matrix_mapping(16, 10, 510, 1)])
     try:
         receiver._on_packet(data_packet(10, 101, 10, force_sync=False))
         receiver._on_sync(101, 1)
@@ -133,9 +142,9 @@ def test_force_sync_controls_behavior_after_sync_timeout():
         receiver.sync_last_packet -= sacn_receiver.NETWORK_DATA_LOSS_TIMEOUT + 0.1
         receiver._expire_sync_streams()
         receiver._on_packet(data_packet(10, 101, 30, force_sync=False))
-        assert receiver.buffer.snapshot()[0][0] == 10
+        assert receiver.mappings[0].sink.snapshot()[0] == 10
         receiver._on_sync(101, 2)
-        assert receiver.buffer.snapshot()[0][0] == 30
+        assert receiver.mappings[0].sink.snapshot()[0] == 30
 
         receiver._on_packet(data_packet(10, 101, 40, force_sync=True))
         receiver._on_sync(101, 3)
@@ -143,24 +152,24 @@ def test_force_sync_controls_behavior_after_sync_timeout():
         receiver.sync_last_packet -= sacn_receiver.NETWORK_DATA_LOSS_TIMEOUT + 0.1
         receiver._expire_sync_streams()
         receiver._on_packet(data_packet(10, 101, 60, force_sync=True))
-        assert receiver.buffer.snapshot()[0][0] == 60
+        assert receiver.mappings[0].sink.snapshot()[0] == 60
     finally:
         receiver.close()
 
 
 def test_switching_sync_universe_clears_matrix_and_discards_old_pending_data():
     with mock.patch.object(sacn_receiver.sacn, 'sACNreceiver') as factory:
-        receiver = sacn_receiver.Receiver(PixelBuffer(16), start_universe=10, start_address=1)
+        receiver = sacn_receiver.Receiver([matrix_mapping(16, 10, 510, 1)])
     try:
         receiver._on_packet(data_packet(10, 100, 10))
         receiver._on_packet(data_packet(11, 100, 20))
         receiver._on_sync(100, 1)
         receiver._on_packet(data_packet(10, 100, 30))
         receiver._on_packet(data_packet(11, 100, 40))
-        assert receiver.buffer.snapshot()[0][0] == 10
+        assert receiver.mappings[0].sink.snapshot()[0] == 10
 
         receiver._on_packet(data_packet(10, 200, 50))
-        pixels, _status = receiver.buffer.snapshot()
+        pixels = receiver.mappings[0].sink.snapshot()
         assert receiver.sync_address == 200
         assert receiver.pending == {}
         assert pixels[:3] == bytes([50, 50, 50])
@@ -169,7 +178,7 @@ def test_switching_sync_universe_clears_matrix_and_discards_old_pending_data():
 
         # A late packet from the previous sync universe cannot publish anything.
         receiver._on_sync(100, 2)
-        assert receiver.buffer.snapshot()[0][510:513] == bytes(3)
+        assert receiver.mappings[0].sink.snapshot()[510:513] == bytes(3)
     finally:
         receiver.close()
 
@@ -201,9 +210,9 @@ def test_renderer_selects_sacn_receiver_and_blits_shared_buffer():
         buffer.write(510, bytes([7] * 258))
         return receiver
 
-    with mock.patch.object(sacn_receiver, 'Receiver', side_effect=make_receiver) as factory:
+    with mock.patch.object(sacn_receiver, 'Receiver', side_effect=lambda mappings: make_receiver(mappings[0].sink)) as factory:
         renderer.render()
-    factory.assert_called_once_with(renderer.network_buffer, start_universe=100, channels_per_universe=510, start_address=1)
+    factory.assert_called_once(); assert factory.call_args.args[0][0].sink is renderer.network_buffer
     renderer.network_quad.setRGB.assert_called_once_with(pixels, 16, 16)
     renderer.network_quad.render.assert_called_once_with()
     renderer.close()
@@ -212,7 +221,7 @@ def test_renderer_selects_sacn_receiver_and_blits_shared_buffer():
 def test_debug_logs_received_universe_and_counters(caplog):
     with mock.patch.object(sacn_receiver.sacn, 'sACNreceiver'):
         with caplog.at_level('DEBUG', logger='sacn_receiver'):
-            receiver = sacn_receiver.Receiver(PixelBuffer(16), start_universe=7, start_address=1)
+            receiver = sacn_receiver.Receiver([matrix_mapping(16, 7, 510, 1)])
             try:
                 receiver._on_packet(SimpleNamespace(
                     universe=7, dmxStartCode=0, sourceName='controller',
@@ -228,7 +237,7 @@ def test_debug_logs_received_universe_and_counters(caplog):
 def test_receiver_delivers_untrimmed_channels_to_non_pixel_sink():
     sink = mock.MagicMock(channel_count=512, channels_per_universe=512)
     with mock.patch.object(sacn_receiver.sacn, 'sACNreceiver'):
-        receiver = sacn_receiver.Receiver(sink, start_universe=10, channels_per_universe=512)
+        receiver = sacn_receiver.Receiver([matrix_mapping(16, 10, 512, sink=sink)])
     try:
         data = data_packet(10, 100, 17)
         receiver._on_packet(data)

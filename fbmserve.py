@@ -23,6 +23,7 @@ else:
 import ndi
 import artnet
 import matrix_buffer
+from channel_mapping import ChannelMapping
 import sacn_receiver
 import led_effect
 
@@ -54,6 +55,12 @@ def validate_matrix_config(size, start_universe, channels=510, start_address=1, 
     count = matrix_buffer.channel_count(size)
     module = sacn_receiver if protocol == 'sacn' else artnet
     return module.validate_config(count, start_universe, channels, start_address)
+
+
+def matrix_channel_mapping(buffer, start_universe, channels, start_address, protocol):
+    validate_matrix_config(buffer.size, start_universe, channels, start_address, protocol)
+    return ChannelMapping(buffer.channel_count, channels, start_universe,
+                          start_address, sink=buffer)
 
 
 def validate_matrix_protocol_config(config, key, label):
@@ -358,20 +365,22 @@ class InputRenderer:
                 self.network_buffer = matrix_buffer.PixelBuffer(config[1])
                 if protocol == 'sacn':
                     self.network_receiver = sacn_receiver.Receiver(
-                        self.network_buffer, start_universe=config[2],
-                        channels_per_universe=config[3], start_address=config[4])
+                        [matrix_channel_mapping(self.network_buffer, config[2], config[3],
+                                                config[4], protocol)])
                 else:
                     description = '%s %dx%d u%d %dch/univ addr%d' % (
                         self.artnet_node_name, config[1], config[1], config[2], config[3], config[4])
                     self.network_receiver = artnet.Receiver(
-                        self.network_buffer, start_universe=config[2],
-                        channels_per_universe=config[3], start_address=config[4],
+                        [matrix_channel_mapping(self.network_buffer, config[2], config[3],
+                                                config[4], protocol)],
                         poll_broadcast=self.artnet_poll_broadcast,
                         node_name=self.artnet_node_name, description=description)
                 self.network_config = config
                 self.state.update(error=None)
-            pixels, status = self.network_buffer.snapshot()
-            status['universes'] = self.network_receiver.mapping.universes
+            pixels = self.network_buffer.snapshot()
+            status = self.network_receiver.status()
+            status['universes'] = validate_matrix_config(
+                config[1], config[2], config[3], config[4], protocol)
             self.network_quad.setRGB(pixels, config[1], config[1])
             self.network_quad.render()
             network_logger = sacn_receiver.logger if protocol == 'sacn' else artnet.logger

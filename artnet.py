@@ -1,5 +1,6 @@
 """Art-Net reception and discovery, independent of channel interpretation."""
 import logging
+from collections import Counter
 import ipaddress
 import socket
 import threading
@@ -29,28 +30,33 @@ def validate_node_name(name):
     return name
 
 
-def poll_reply_groups(start_universe, universe_count):
+def poll_reply_groups(start_universe, universe_count=None):
     """Group input Port-Addresses into replies of at most four ports.
 
     NetSwitch and SubSwitch are shared by all ports in one ArtPollReply, so a
     group must also end at each 16-universe Sub-Net boundary.
     """
-    end = start_universe + universe_count
     groups = []
-    address = start_universe
-    while address < end:
-        subnet_end = (address // 16 + 1) * 16
-        group_end = min(end, subnet_end, address + ART_POLL_REPLY_PORT_LIMIT)
-        groups.append(list(range(address, group_end)))
-        address = group_end
+    addresses = (range(start_universe, start_universe + universe_count)
+                 if universe_count is not None else sorted(set(start_universe)))
+    group = []
+    for address in addresses:
+        if (group and (address != group[-1] + 1 or address // 16 != group[0] // 16 or
+                       len(group) == ART_POLL_REPLY_PORT_LIMIT)):
+            groups.append(group)
+            group = []
+        group.append(address)
+    if group:
+        groups.append(group)
     return groups
 
 
-def build_poll_replies(ip_address, start_universe, count,
+def build_poll_replies(ip_address, start_universe, count=None,
                        targeted_range=None, node_name='fbmserve', description=None):
     """Build one ArtPollReply per advertised group of up to four universes."""
     node_name = validate_node_name(node_name)
-    addresses = range(start_universe, start_universe + count)
+    addresses = (tuple(range(start_universe, start_universe + count))
+                 if count is not None else tuple(sorted(set(start_universe))))
     if targeted_range is not None:
         bottom, top = targeted_range
         if not any(bottom <= address <= top for address in addresses):
@@ -60,7 +66,7 @@ def build_poll_replies(ip_address, start_universe, count,
     short_name = b'fbmserve'[:17].ljust(18, b'\0')
     long_name = (description or node_name).encode('ascii')[:63].ljust(64, b'\0')
     packets = []
-    for group_index, group in enumerate(poll_reply_groups(start_universe, count), start=1):
+    for group_index, group in enumerate(poll_reply_groups(addresses), start=1):
         reply = bytearray(ART_POLL_REPLY_SIZE)
         reply[0:8] = ARTNET_ID
         reply[8:10] = OP_POLL_REPLY.to_bytes(2, 'little')
@@ -86,18 +92,22 @@ def build_poll_replies(ip_address, start_universe, count,
 
 
 class ArtDmxInput:
-    """Decode ArtDmx/ArtSync into a channel sink.
-
-    The sink exposes its required channel_count, offset writes, synchronization
-    methods, and diagnostics. This input owns universe and packing configuration.
-    """
-    def __init__(self, buffer, start_universe=0, channels_per_universe=510,
-                 start_address=1):
-        self.buffer = buffer
-        self.mapping = ChannelMapping(buffer.channel_count, channels_per_universe,
-                                      start_universe, start_address, 0, 32767)
+    """Decode ArtDmx/ArtSync and route packets through a channel mapping."""
+    def __init__(self, mappings):
+        if not mappings:
+            raise ValueError('At least one channel mapping is required')
+        self.mappings = mappings
+        self.universe_numbers = tuple(sorted({universe for mapping in self.mappings
+                                              for universe in mapping.universe_numbers}))
+        if any(not 0 <= universe <= 32767 for universe in self.universe_numbers):
+            raise ValueError('Art-Net Port-Addresses must be between 0 and 32767')
         self.last_sync = None
         self.last_dmx_source = None
+        self.diagnostics = Counter()
+        self.diagnostics_lock = threading.Lock()
+        self.packets = 0
+        self.last_packet = None
+        self.error = None
 
     def update(self, packet, source=None):
         # ArtDmx's fixed header (byte offsets, end exclusive):
@@ -126,15 +136,16 @@ class ArtDmxInput:
             if len(packet) < 14:
                 return self._reject('short_sync')
             if self.last_dmx_source is not None and source != self.last_dmx_source:
-                return self.buffer._reject('sync_source_mismatch')
+                return self._reject('sync_source_mismatch')
             now = time.monotonic()
             if self.last_sync is None or now - self.last_sync >= 4.0:
-                self.buffer.begin_sync()
+                for mapping in self.mappings:
+                    mapping.begin_sync()
             else:
-                self.buffer.publish_sync()
+                for mapping in self.mappings:
+                    mapping.publish_sync()
             self.last_sync = now
-            with self.buffer.lock:
-                self.buffer.diagnostics['sync'] += 1
+            self._record('sync')
             return True
         if opcode != OP_DMX:
             return self._reject('other_opcode')
@@ -152,27 +163,46 @@ class ArtDmxInput:
             return self._reject('invalid_length')
         if len(packet) < DMX_HEADER_SIZE + length:
             return self._reject('truncated_payload')
-        change = self.mapping.map(universe, packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length])
-        if change is None:
-            return self._reject('outside_universe_range')
+        data = packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length]
         if self.last_sync is not None and time.monotonic() - self.last_sync >= 4.0:
             self.last_sync = None
-            self.buffer.end_sync()
-        accepted = self.buffer.write(*change)
+            for mapping in self.mappings:
+                mapping.end_sync()
+        matching = [mapping for mapping in self.mappings
+                    if universe in mapping.universe_indices]
+        if not matching:
+            return self._reject('outside_universe_range')
+        accepted_results = [mapping.deliver(universe, data) for mapping in matching]
+        accepted = all(accepted_results)
+        if accepted:
+            self._record('accepted', packet=True)
         if accepted and source is not None:
             self.last_dmx_source = source
         return accepted
 
     def _reject(self, reason):
-        return self.buffer._reject(reason)
+        self._record(reason)
+        return False
+
+    def _record(self, reason, packet=False, amount=1):
+        with self.diagnostics_lock:
+            self.diagnostics[reason] += amount
+            if packet:
+                self.packets += 1
+                self.last_packet = time.monotonic()
+
+    def status(self):
+        with self.diagnostics_lock:
+            age = None if self.last_packet is None else time.monotonic() - self.last_packet
+            return {'packets': self.packets, 'age': age, 'error': self.error,
+                    'universes': len(self.universe_numbers)}
 
 
 class Receiver(ArtDmxInput):
-    def __init__(self, buffer, start_universe=0, channels_per_universe=510,
-                 start_address=1,
+    def __init__(self, mapping,
                  host='0.0.0.0', port=PORT, poll_broadcast=False,
                  node_name='fbmserve', description=None):
-        super().__init__(buffer, start_universe, channels_per_universe, start_address)
+        super().__init__(mapping)
         self.node_name = validate_node_name(node_name)
         self.description = description
         self.poll_broadcast = poll_broadcast
@@ -188,9 +218,8 @@ class Receiver(ArtDmxInput):
         self.next_debug = 0.0
         self.last_datagram = 'none'
         self.seen_universes = set()
-        logger.debug('Listening on %s:%d; universes=%d..%d',
-                     *self.socket.getsockname(), self.mapping.start_universe,
-                     self.mapping.start_universe + self.mapping.universes - 1)
+        logger.debug('Listening on %s:%d; universes=%s',
+                     *self.socket.getsockname(), self.universe_numbers)
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._receive, name='artnet', daemon=True)
         self.thread.start()
@@ -204,8 +233,7 @@ class Receiver(ArtDmxInput):
                 continue
             except OSError as error:
                 if not self.stopped.is_set():
-                    with self.buffer.lock:
-                        self.buffer.error = str(error)
+                    self.error = str(error)
                 return
             if (len(packet) >= 10 and packet[:8] == ARTNET_ID and
                     int.from_bytes(packet[8:10], 'little') == OP_POLL):
@@ -253,19 +281,20 @@ class Receiver(ArtDmxInput):
                 route.connect((sender[0], PORT))
                 node_ip = route.getsockname()[0]
             replies = build_poll_replies(
-                node_ip, self.mapping.start_universe, self.mapping.universes,
-                targeted_range, self.node_name, self.description)
+                node_ip, self.universe_numbers,
+                targeted_range=targeted_range, node_name=self.node_name,
+                description=self.description)
             destination = ('255.255.255.255' if self.poll_broadcast else sender[0], PORT)
             for reply in replies:
                 self.socket.sendto(reply, destination)
         except OSError as error:
-            with self.buffer.lock:
-                self.buffer.error = str(error)
+            self.error = str(error)
             self._reject('poll_reply_error')
             logger.warning('Unable to reply to ArtPoll from %s: %s', sender[0], error)
             return False
-        self.buffer.diagnostics['poll'] += 1
-        self.buffer.diagnostics['poll_replies'] += len(replies)
+        self._record('poll')
+        if replies:
+            self._record('poll_replies', amount=len(replies))
         logger.debug('Replied to ArtPoll from %s with %d ArtPollReply packet(s) via %s',
                      sender[0], len(replies), 'broadcast' if self.poll_broadcast else 'unicast')
         return True
@@ -278,7 +307,8 @@ class Receiver(ArtDmxInput):
             return
         self.next_debug = now + 1.0
         logger.debug('RX totals=%s; observed universes (up to 32)=%s; last datagram: %s',
-                     dict(self.buffer.diagnostics), sorted(self.seen_universes), self.last_datagram)
+                     dict(self.diagnostics),
+                     sorted(self.seen_universes), self.last_datagram)
 
     def close(self):
         self.stopped.set()
@@ -286,6 +316,10 @@ class Receiver(ArtDmxInput):
         self.socket.close()
 
 
-def validate_config(channel_count, start_universe, channels_per_universe=510, start_address=1):
-    return ChannelMapping(channel_count, channels_per_universe, start_universe,
-                          start_address, 0, 32767).universes
+def validate_config(channel_count, start_universe, channels_per_universe=510,
+                    start_address=1):
+    count = ChannelMapping.required_universes(
+        channel_count, channels_per_universe, start_address)
+    if type(start_universe) is not int or not 0 <= start_universe <= 32768 - count:
+        raise ValueError('Art-Net universe range must fit within 0 to 32767')
+    return count

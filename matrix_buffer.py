@@ -1,7 +1,5 @@
-"""Protocol-neutral RGB matrix channel buffer shared by network receivers."""
-from collections import Counter
+"""Protocol-neutral RGB pixel storage written by network receivers."""
 import threading
-import time
 
 
 def channel_count(size):
@@ -14,8 +12,7 @@ class PixelBuffer:
     """RGB storage accepting sequential channel blobs at zero-based offsets.
 
     channel_count reports the required number of byte values. Universe packing,
-    addressing, and packet trimming are receiver concerns. Batch writes publish atomically without counting packets
-    again; those packets were counted when received and staged.
+    addressing, and packet trimming are receiver concerns.
     """
     def __init__(self, size):
         self.channel_count = channel_count(size)
@@ -23,10 +20,6 @@ class PixelBuffer:
         self.pixels = bytearray(self.channel_count)
         self.staging_pixels = None
         self.lock = threading.Lock()
-        self.packets = 0
-        self.last_packet = None
-        self.error = None
-        self.diagnostics = Counter()
 
     def clear(self):
         with self.lock:
@@ -48,12 +41,8 @@ class PixelBuffer:
     def write(self, offset, data):
         """Write a channel blob, preserving untouched bytes and clipping the end."""
         if type(offset) is not int or not 0 <= offset < self.channel_count:
-            return self._reject('outside_buffer_range')
+            return False
         self.write_batch([(offset, data)])
-        with self.lock:
-            self.packets += 1
-            self.diagnostics['accepted'] += 1
-            self.last_packet = time.monotonic()
         return True
 
     def write_batch(self, changes):
@@ -66,23 +55,9 @@ class PixelBuffer:
                 count = min(len(data), self.channel_count - offset)
                 target[offset:offset + count] = data[:count]
 
-    def mark_packet_received(self, reason='accepted'):
-        with self.lock:
-            self.packets += 1
-            self.diagnostics[reason] += 1
-            self.last_packet = time.monotonic()
-
     def _target_buffer_locked(self):
         return self.pixels if self.staging_pixels is None else self.staging_pixels
 
-    def _reject(self, reason):
-        with self.lock:
-            self.diagnostics[reason] += 1
-        return False
-
     def snapshot(self):
         with self.lock:
-            age = None if self.last_packet is None else time.monotonic() - self.last_packet
-            return bytes(self.pixels), {
-                'packets': self.packets, 'age': age, 'error': self.error,
-            }
+            return bytes(self.pixels)

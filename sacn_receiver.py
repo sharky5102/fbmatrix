@@ -5,6 +5,7 @@ switches to another sync universe, it discards pending updates and clears the
 channel sink before processing the new stream.
 """
 import logging
+from collections import Counter
 import threading
 import time
 from channel_mapping import ChannelMapping
@@ -67,13 +68,21 @@ def parse_sync_packet(packet):
 
 
 class Receiver:
-    """Receive sACN into a channel sink; the receiver owns universe mapping."""
-    def __init__(self, buffer, start_universe=1, channels_per_universe=510,
-                 start_address=1, bind_address='0.0.0.0'):
-        self.buffer = buffer
-        self.mapping = ChannelMapping(buffer.channel_count, channels_per_universe,
-                                      start_universe, start_address, 1, MAX_UNIVERSE)
+    """Receive sACN and route packets using a channel mapping."""
+    def __init__(self, mappings, bind_address='0.0.0.0'):
+        if not mappings:
+            raise ValueError('At least one channel mapping is required')
+        self.mappings = mappings
+        self.universe_numbers = tuple(sorted({universe for mapping in self.mappings
+                                              for universe in mapping.universe_numbers}))
+        if any(not 1 <= universe <= MAX_UNIVERSE for universe in self.universe_numbers):
+            raise ValueError('sACN universes must be between 1 and %d' % MAX_UNIVERSE)
         self.seen_universes = set()
+        self.diagnostics = Counter()
+        self.diagnostics_lock = threading.Lock()
+        self.packets = 0
+        self.last_packet = None
+        self.error = None
         self.last_datagram = 'none'
         self.next_debug = 0.0
         self.bind_address = bind_address
@@ -99,7 +108,7 @@ class Receiver:
         # starting the library's normal receive thread.
         sync_socket.handler_proxy.handler = self.receiver._handler
         try:
-            for universe in range(self.mapping.start_universe, self.mapping.start_universe + self.mapping.universes):
+            for universe in self.universe_numbers:
                 self.receiver.register_listener(
                     'universe', self._on_packet, universe=universe)
                 self.receiver.join_multicast(universe)
@@ -107,8 +116,8 @@ class Receiver:
         except Exception:
             self.receiver.stop()
             raise
-        logger.info('Listening on sACN UDP %d; universes=%d..%d',
-                    PORT, self.mapping.start_universe, self.mapping.start_universe + self.mapping.universes - 1)
+        logger.info('Listening on sACN UDP %d; universes=%s',
+                    PORT, self.universe_numbers)
         self.debug_thread = None
         if logger.isEnabledFor(logging.DEBUG):
             self.debug_thread = threading.Thread(
@@ -117,11 +126,13 @@ class Receiver:
 
     def _on_packet(self, packet):
         if packet.dmxStartCode != 0:
-            self.buffer._reject('unsupported_start_code')
+            self._reject('unsupported_start_code')
             return
-        change = self.mapping.map(packet.universe, packet.dmxData)
-        if change is None:
-            self.buffer._reject('outside_universe_range')
+        mapped = [(mapping, mapping.map(packet.universe, packet.dmxData))
+                  for mapping in self.mappings
+                  if packet.universe in mapping.universe_indices]
+        if not mapped:
+            self._reject('outside_universe_range')
             return
         sync_address = packet.syncAddr
         with self.sync_lock:
@@ -129,10 +140,10 @@ class Receiver:
                 self._switch_sync_address(sync_address)
 
             if sync_address == 0:
-                accepted = self.buffer.write(*change)
+                accepted = self._deliver(mapped, packet.universe, packet.dmxData)
             elif sync_address != self.joined_sync_address:
-                self.buffer._reject('sync_join_error')
-                accepted = self.buffer.write(*change)
+                self._reject('sync_join_error')
+                accepted = self._deliver(mapped, packet.universe, packet.dmxData)
             else:
                 now = time.monotonic()
                 active = (self.sync_seen and self.sync_last_packet is not None and
@@ -141,12 +152,15 @@ class Receiver:
                 if active or (self.sync_seen and not packet.option_ForceSync):
                     # Keep only the newest packet for each data universe. The
                     # next matching sync packet publishes all pending universes.
-                    self.pending[packet.universe] = change
-                    self.buffer.mark_packet_received()
+                    for mapping, change in mapped:
+                        self.pending[(mapping, packet.universe)] = change
                     accepted = True
                 else:
-                    self.pending.pop(packet.universe, None)
-                    accepted = self.buffer.write(*change)
+                    for mapping, _change in mapped:
+                        self.pending.pop((mapping, packet.universe), None)
+                    accepted = self._deliver(mapped, packet.universe, packet.dmxData)
+        if accepted:
+            self._record('accepted', packet=True)
         if logger.isEnabledFor(logging.DEBUG):
             self._log_packet(packet, accepted)
 
@@ -160,7 +174,8 @@ class Receiver:
         self.sync_sequence = None
         self.sync_address = sync_address
         self.joined_sync_address = None
-        self.buffer.clear()
+        for mapping in self.mappings:
+            mapping.clear()
         if old_address is not None:
             self.receiver.leave_multicast(old_address)
         if sync_address != 0:
@@ -170,8 +185,7 @@ class Receiver:
                 self.receiver.join_multicast(sync_address)
                 self.joined_sync_address = sync_address
             except OSError as error:
-                with self.buffer.lock:
-                    self.buffer.error = str(error)
+                self.error = str(error)
 
     def _log_packet(self, packet, accepted):
         if logger.isEnabledFor(logging.DEBUG):
@@ -213,13 +227,15 @@ class Receiver:
             self.sync_sequence = sequence
             self.sync_seen = True
             self.sync_last_packet = now
-            changes = list(self.pending.values())
+            changes = {}
+            for (mapping, _universe), change in self.pending.items():
+                changes.setdefault(mapping, []).append(change)
             self.pending.clear()
-            if changes:
-                self.buffer.write_batch(changes)
-            with self.buffer.lock:
-                self.buffer.diagnostics['sync_published'] += bool(changes)
-                self.buffer.diagnostics['sync'] += 1
+            for mapping in self.mappings:
+                if mapping in changes:
+                    mapping.deliver_batch(changes[mapping])
+                    self._record('sync_published')
+            self._record('sync')
 
     def _debug_report(self):
         now = time.monotonic()
@@ -227,7 +243,31 @@ class Receiver:
             return
         self.next_debug = now + 1.0
         logger.debug('RX totals=%s; observed universes (up to 32)=%s; last datagram: %s',
-                     dict(self.buffer.diagnostics), sorted(self.seen_universes), self.last_datagram)
+                     dict(self.diagnostics),
+                     sorted(self.seen_universes), self.last_datagram)
+
+    def _record(self, reason, packet=False, amount=1):
+        with self.diagnostics_lock:
+            self.diagnostics[reason] += amount
+            if packet:
+                self.packets += 1
+                self.last_packet = time.monotonic()
+
+    def status(self):
+        with self.diagnostics_lock:
+            age = None if self.last_packet is None else time.monotonic() - self.last_packet
+            return {'packets': self.packets, 'age': age, 'error': self.error,
+                    'universes': len(self.universe_numbers)}
+
+    def _deliver(self, mapped, universe, data):
+        accepted = True
+        for mapping, _change in mapped:
+            accepted = mapping.deliver(universe, data) and accepted
+        return accepted
+
+    def _reject(self, reason):
+        self._record(reason)
+        return False
 
     def close(self):
         self.stopped.set()
@@ -236,6 +276,10 @@ class Receiver:
             self.debug_thread.join()
 
 
-def validate_config(channel_count, start_universe, channels_per_universe=510, start_address=1):
-    return ChannelMapping(channel_count, channels_per_universe, start_universe,
-                          start_address, 1, MAX_UNIVERSE).universes
+def validate_config(channel_count, start_universe, channels_per_universe=510,
+                    start_address=1):
+    count = ChannelMapping.required_universes(
+        channel_count, channels_per_universe, start_address)
+    if type(start_universe) is not int or not 1 <= start_universe <= MAX_UNIVERSE - count + 1:
+        raise ValueError('sACN universe range must fit within 1 to %d' % MAX_UNIVERSE)
+    return count
