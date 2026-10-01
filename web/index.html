@@ -118,6 +118,29 @@
         </label>
       </div>
     </section>
+
+    <section class="ndi-panel network-control-panel" id="network-control-panel" aria-label="Network Control">
+      <h2>Network Control</h2>
+      <label class="check-row"><input id="network-control-enabled" type="checkbox"><span>Enable network control</span></label>
+      <label><span>Protocol</span><select id="network-control-protocol">
+        <option value="artnet">Art-Net</option><option value="sacn">sACN</option>
+      </select></label>
+      <label id="network-control-artnet-label"><span>Art-Net Port-Address (0-based)</span>
+        <input id="network-control-artnet-universe" type="number" min="0" max="32767" step="1" value="0">
+      </label>
+      <label id="network-control-sacn-label" hidden><span>sACN universe (1-based)</span>
+        <input id="network-control-sacn-universe" type="number" min="1" max="63999" step="1" value="1">
+      </label>
+      <label><span>Starting channel address</span>
+        <input id="network-control-address" type="number" min="1" max="501" step="1" value="1">
+      </label>
+      <label><span>Hold after signal loss (seconds)</span>
+        <input id="network-control-hold" type="number" min="0" max="3600" step="1" value="30">
+      </label>
+      <p>Uses the same 12-channel profile as DMX input. Network control applies in every visual mode.</p>
+      <small id="network-control-status" class="input-status"></small>
+      <strong id="network-control-error" class="input-error" hidden></strong>
+    </section>
   </main>
 
   <script src="/app.js"></script>

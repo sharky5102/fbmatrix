@@ -107,6 +107,8 @@ class ArtDmxInput:
         self.diagnostics_lock = threading.Lock()
         self.packets = 0
         self.last_packet = None
+        self.mapping_packets = Counter()
+        self.mapping_last_packet = {}
         self.error = None
 
     def update(self, packet, source=None):
@@ -176,6 +178,11 @@ class ArtDmxInput:
         accepted = all(accepted_results)
         if accepted:
             self._record('accepted', packet=True)
+            received_at = time.monotonic()
+            with self.diagnostics_lock:
+                for mapping in matching:
+                    self.mapping_packets[mapping] += 1
+                    self.mapping_last_packet[mapping] = received_at
         if accepted and source is not None:
             self.last_dmx_source = source
         return accepted
@@ -191,18 +198,29 @@ class ArtDmxInput:
                 self.packets += 1
                 self.last_packet = time.monotonic()
 
+    def _set_error(self, error):
+        with self.diagnostics_lock:
+            self.error = str(error)
+
     def status(self):
         with self.diagnostics_lock:
             age = None if self.last_packet is None else time.monotonic() - self.last_packet
             return {'packets': self.packets, 'age': age, 'error': self.error,
                     'universes': len(self.universe_numbers)}
 
+    def mapping_status(self, mapping):
+        with self.diagnostics_lock:
+            received_at = self.mapping_last_packet.get(mapping)
+            return {'packets': self.mapping_packets[mapping],
+                    'age': None if received_at is None else time.monotonic() - received_at,
+                    'error': self.error, 'diagnostics': dict(self.diagnostics)}
+
 
 class Receiver(ArtDmxInput):
-    def __init__(self, mapping,
+    def __init__(self, mappings,
                  host='0.0.0.0', port=PORT, poll_broadcast=False,
                  node_name='fbmserve', description=None):
-        super().__init__(mapping)
+        super().__init__(mappings)
         self.node_name = validate_node_name(node_name)
         self.description = description
         self.poll_broadcast = poll_broadcast
@@ -233,7 +251,7 @@ class Receiver(ArtDmxInput):
                 continue
             except OSError as error:
                 if not self.stopped.is_set():
-                    self.error = str(error)
+                    self._set_error(error)
                 return
             if (len(packet) >= 10 and packet[:8] == ARTNET_ID and
                     int.from_bytes(packet[8:10], 'little') == OP_POLL):
@@ -288,7 +306,7 @@ class Receiver(ArtDmxInput):
             for reply in replies:
                 self.socket.sendto(reply, destination)
         except OSError as error:
-            self.error = str(error)
+            self._set_error(error)
             self._reject('poll_reply_error')
             logger.warning('Unable to reply to ArtPoll from %s: %s', sender[0], error)
             return False

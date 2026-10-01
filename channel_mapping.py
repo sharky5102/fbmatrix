@@ -1,9 +1,51 @@
 """Receiver-side mapping from DMX universes to a sequential channel stream."""
 
+from typing import Protocol
+
+
+class ChannelSink(Protocol):
+    """Storage interface required by ChannelMapping."""
+    def write(self, offset: int, data: bytes) -> bool:
+        """Write a single blob at a zero-based stream offset."""
+        ...
+
+    def write_batch(self, changes: list[tuple[int, bytes]]) -> None:
+        """Apply several channel writes together."""
+        ...
+
+    def begin_sync(self) -> None:
+        ...
+
+    def publish_sync(self) -> None:
+        ...
+
+    def end_sync(self) -> None:
+        ...
+
+    def clear(self) -> None:
+        ...
+
+
+class ChannelBufferBase:
+    """Provide the single-write operation in terms of batch writes."""
+    channel_count: int
+
+    def write_batch(self, changes: list[tuple[int, bytes]]) -> None:
+        raise NotImplementedError
+
+    def write(self, offset: int, data: bytes) -> bool:
+        """Write one valid stream offset through the batch implementation."""
+        if type(offset) is not int or offset < 0:
+            return False
+        if offset >= self.channel_count:
+            return False
+        self.write_batch([(offset, data)])
+        return True
+
 
 class ChannelMapping:
     def __init__(self, channel_count, channels_per_universe, start_universe,
-                 start_address, sink):
+                 start_address, sink: ChannelSink):
         if type(channel_count) is not int or channel_count < 1:
             raise ValueError('Channel count must be a positive integer')
         if type(channels_per_universe) is not int or channels_per_universe not in (510, 512):

@@ -1,5 +1,6 @@
 """Protocol-neutral RGB pixel storage written by network receivers."""
 import threading
+from channel_mapping import ChannelBufferBase
 
 
 def channel_count(size):
@@ -8,7 +9,7 @@ def channel_count(size):
     return size * size * 3
 
 
-class PixelBuffer:
+class PixelBuffer(ChannelBufferBase):
     """RGB storage accepting sequential channel blobs at zero-based offsets.
 
     channel_count reports the required number of byte values. Universe packing,
@@ -38,13 +39,6 @@ class PixelBuffer:
         with self.lock:
             self.staging_pixels = None
 
-    def write(self, offset, data):
-        """Write a channel blob, preserving untouched bytes and clipping the end."""
-        if type(offset) is not int or not 0 <= offset < self.channel_count:
-            return False
-        self.write_batch([(offset, data)])
-        return True
-
     def write_batch(self, changes):
         """Publish (offset, data) blobs together under one lock."""
         with self.lock:
@@ -61,3 +55,29 @@ class PixelBuffer:
     def snapshot(self):
         with self.lock:
             return bytes(self.pixels)
+
+
+class ChannelBuffer(ChannelBufferBase):
+    """Storage for sequential non-pixel channel data such as DMX controls."""
+    def __init__(self, channel_count):
+        if type(channel_count) is not int or channel_count <= 0:
+            raise ValueError('Channel count must be a positive integer')
+        self.channel_count = channel_count
+        self.channels = bytearray(channel_count)
+        self.lock = threading.Lock()
+
+    def clear(self):
+        with self.lock:
+            self.channels[:] = bytes(self.channel_count)
+
+    def write_batch(self, changes):
+        with self.lock:
+            for offset, data in changes:
+                if type(offset) is not int or not 0 <= offset < self.channel_count:
+                    continue
+                count = min(len(data), self.channel_count - offset)
+                self.channels[offset:offset + count] = data[:count]
+
+    def snapshot(self):
+        with self.lock:
+            return bytes(self.channels)

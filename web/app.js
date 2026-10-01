@@ -24,6 +24,13 @@ const state = {
   matrix_sacn: { universe: 1 },
   matrix_protocol: 'artnet',
   matrix_status: {},
+  network_control_enabled: false,
+  network_control_protocol: 'artnet',
+  network_control_artnet: { port_address: 0 },
+  network_control_sacn: { universe: 1 },
+  network_control_start_address: 1,
+  network_control_hold: 30,
+  network_control_status: {},
 };
 
 const preview = {
@@ -66,6 +73,14 @@ const ndiSourceEl = document.getElementById('ndi-source');
 const ndiPanelEl = document.getElementById('ndi-panel');
 const ndiStatusEl = document.getElementById('ndi-status');
 const ndiErrorEl = document.getElementById('ndi-error');
+const networkControlEnabledEl = document.getElementById('network-control-enabled');
+const networkControlProtocolEl = document.getElementById('network-control-protocol');
+const networkControlArtNetEl = document.getElementById('network-control-artnet-universe');
+const networkControlSacnEl = document.getElementById('network-control-sacn-universe');
+const networkControlAddressEl = document.getElementById('network-control-address');
+const networkControlHoldEl = document.getElementById('network-control-hold');
+const networkControlStatusEl = document.getElementById('network-control-status');
+const networkControlErrorEl = document.getElementById('network-control-error');
 
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -209,6 +224,23 @@ function renderControls() {
   }
   renderEffects();
   renderLedEffects();
+  networkControlEnabledEl.checked = state.network_control_enabled;
+  networkControlProtocolEl.value = state.network_control_protocol;
+  if (document.activeElement !== networkControlArtNetEl) networkControlArtNetEl.value = state.network_control_artnet.port_address;
+  if (document.activeElement !== networkControlSacnEl) networkControlSacnEl.value = state.network_control_sacn.universe;
+  if (document.activeElement !== networkControlAddressEl) networkControlAddressEl.value = state.network_control_start_address;
+  if (document.activeElement !== networkControlHoldEl) networkControlHoldEl.value = state.network_control_hold;
+  const controlSacn = state.network_control_protocol === 'sacn';
+  document.getElementById('network-control-artnet-label').hidden = controlSacn;
+  document.getElementById('network-control-sacn-label').hidden = !controlSacn;
+  const controlStats = state.network_control_status || {};
+  networkControlStatusEl.textContent = controlStats.error ? 'Unavailable'
+    : !state.network_control_enabled ? 'Disabled'
+      : controlStats.packets ? `${controlStats.packets} packets / ${controlStats.age <= state.network_control_hold ? 'Receiving' : 'Signal lost; using web controls'}`
+        : `Waiting for ${controlSacn ? 'sACN' : 'Art-Net'}`;
+  networkControlErrorEl.hidden = !controlStats.error;
+  networkControlErrorEl.textContent = controlStats.error || '';
+  if (controlStats.error) networkControlStatusEl.textContent += ` / ${controlStats.error}`;
 }
 
 function renderNdiSources() {
@@ -556,6 +588,20 @@ modeEffectEl.addEventListener('click', () => updateState({ input_mode: 'effect' 
 modeNdiEl.addEventListener('click', () => updateState({ input_mode: 'ndi' }));
 ndiSourceEl.addEventListener('change', () => {
   if (ndiSourceEl.value) updateState({ ndi_source: ndiSourceEl.value, input_mode: 'ndi' });
+});
+networkControlEnabledEl.addEventListener('change', () => updateState({ network_control_enabled: networkControlEnabledEl.checked }));
+networkControlProtocolEl.addEventListener('change', () => updateState({ network_control_protocol: networkControlProtocolEl.value }));
+networkControlArtNetEl.addEventListener('change', () => {
+  if (networkControlArtNetEl.reportValidity()) updateState({ network_control_artnet: { ...state.network_control_artnet, port_address: Number(networkControlArtNetEl.value) } });
+});
+networkControlSacnEl.addEventListener('change', () => {
+  if (networkControlSacnEl.reportValidity()) updateState({ network_control_sacn: { ...state.network_control_sacn, universe: Number(networkControlSacnEl.value) } });
+});
+networkControlAddressEl.addEventListener('change', () => {
+  if (networkControlAddressEl.reportValidity()) updateState({ network_control_start_address: Number(networkControlAddressEl.value) });
+});
+networkControlHoldEl.addEventListener('change', () => {
+  if (networkControlHoldEl.reportValidity()) updateState({ network_control_hold: Number(networkControlHoldEl.value) });
 });
 
 setInterval(refreshState, 1500);

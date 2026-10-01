@@ -270,6 +270,30 @@ label {
   gap: 10px;
 }
 
+.network-control-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  margin-bottom: 18px;
+}
+
+.network-control-panel h2,
+.network-control-panel p,
+.network-control-panel > small,
+.network-control-panel > strong {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.network-control-panel .check-row {
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 760px) {
+  .network-control-panel { grid-template-columns: 1fr; }
+}
+
 label[hidden] {
   display: none;
 }

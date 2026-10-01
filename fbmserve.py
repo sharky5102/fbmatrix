@@ -26,6 +26,7 @@ import matrix_buffer
 from channel_mapping import ChannelMapping
 import sacn_receiver
 import led_effect
+from assembly.network_matrix import NetworkMatrixQuad
 
 
 DMX_CHANNELS = 12
@@ -63,6 +64,18 @@ def matrix_channel_mapping(buffer, start_universe, channels, start_address, prot
                           start_address, sink=buffer)
 
 
+def validate_control_config(protocol, artnet_config, sacn_config, start_address):
+    artnet_port = validate_matrix_protocol_config(artnet_config, 'port_address', 'Art-Net')
+    sacn_universe = validate_matrix_protocol_config(sacn_config, 'universe', 'sACN')
+    # The 12-channel DMX profile has to fit inside a single universe.
+    if protocol not in ('artnet', 'sacn'):
+        raise ValueError('Unknown Network Control protocol')
+    if protocol == 'artnet':
+        artnet.validate_config(DMX_CHANNELS, artnet_port, 512, start_address)
+    else:
+        sacn_receiver.validate_config(DMX_CHANNELS, sacn_universe, 512, start_address)
+
+
 def validate_matrix_protocol_config(config, key, label):
     if not isinstance(config, dict) or set(config) != {key}:
         raise ValueError('Invalid %s Network Matrix settings' % label)
@@ -91,6 +104,13 @@ class AppState:
     matrix_sacn: dict
     matrix_protocol: str
     matrix_status: dict = dataclasses.field(metadata={'persist': False})
+    network_control_enabled: bool
+    network_control_protocol: str
+    network_control_artnet: dict
+    network_control_sacn: dict
+    network_control_start_address: int
+    network_control_hold: float
+    network_control_status: dict = dataclasses.field(metadata={'persist': False})
     led_effect: str
     supersample: float
     ndi_status: dict = dataclasses.field(metadata={'persist': False})
@@ -124,6 +144,12 @@ class AppState:
         matrix_channels_per_universe=510,
         matrix_start_address=1,
         matrix_protocol='artnet',
+        network_control_enabled=False,
+        network_control_protocol='artnet',
+        network_control_artnet=None,
+        network_control_sacn=None,
+        network_control_start_address=1,
+        network_control_hold=30.0,
     ):
         self.lock = threading.Lock()
         self.effect = effect
@@ -152,6 +178,25 @@ class AppState:
         self.matrix_start_address = matrix_start_address
         self.matrix_size = matrix_size
         self.matrix_status = {}
+        network_control_artnet = ({'port_address': 0} if network_control_artnet is None
+                                  else network_control_artnet)
+        network_control_sacn = ({'universe': 1} if network_control_sacn is None
+                                else network_control_sacn)
+        validate_control_config(network_control_protocol, network_control_artnet,
+                                network_control_sacn, network_control_start_address)
+        if not isinstance(network_control_enabled, bool):
+            raise ValueError('Network Control enabled must be boolean')
+        if (isinstance(network_control_hold, bool) or
+                not isinstance(network_control_hold, (int, float)) or
+                not math.isfinite(network_control_hold) or network_control_hold < 0):
+            raise ValueError('Network Control hold must be a non-negative number')
+        self.network_control_enabled = network_control_enabled
+        self.network_control_protocol = network_control_protocol
+        self.network_control_artnet = dict(network_control_artnet)
+        self.network_control_sacn = dict(network_control_sacn)
+        self.network_control_start_address = network_control_start_address
+        self.network_control_hold = float(network_control_hold)
+        self.network_control_status = {}
         self.ndi_status = ndi_status or {}
         self.led_effect = led_effect_id if led_effect is None else led_effect
         self.supersample = supersample
@@ -248,9 +293,11 @@ class InputRenderer:
         self.ndi_receiver = None
         self.current_ndi_source = None
         self.ndi_quad = None
-        self.network_receiver = None
-        self.network_buffer = None
+        self.network_dmx_receivers = {}
+        self.network_buffers = {}
+        self.network_mappings = {}
         self.network_config = None
+        self.network_buffer = None
         self.network_quad = None
         self.next_network_debug = 0.0
         self.next_ndi_status = 0.0
@@ -273,6 +320,8 @@ class InputRenderer:
         snapshot = self.state.snapshot()
         tick = time.monotonic()
         self.apply_dmx(snapshot, tick)
+        self.configure_network_inputs(snapshot)
+        self.apply_network_dmx(snapshot, tick)
         self.effect_time += (tick - self.last_effect_tick) * snapshot['speed']
         self.last_effect_tick = tick
 
@@ -294,9 +343,10 @@ class InputRenderer:
                 now, snapshot['brightness'])
 
         if snapshot['input_mode'] != 'network_matrix':
-            self.close_network_receiver()
+            self.state.update(matrix_status={})
+
         if snapshot['input_mode'] == 'network_matrix':
-            self.close_receiver()
+            self.close_ndi_receiver()
             self.render_network_matrix(snapshot)
             return
 
@@ -327,7 +377,7 @@ class InputRenderer:
             self.state.update(error='NDI is unavailable; set %s to libndi.so' % ndi.LIBRARY_ENV)
             return
         if source != self.current_ndi_source:
-            self.close_receiver()
+            self.close_ndi_receiver()
             try:
                 self.ndi_receiver = ndi.Receiver(self.ndi_runtime, source)
                 if self.ndi_quad is None:
@@ -357,28 +407,17 @@ class InputRenderer:
                   snapshot['matrix_channels_per_universe'], snapshot['matrix_start_address'],
                   self.artnet_node_name)
         try:
-            if config != self.network_config:
-                self.close_network_receiver()
-                if self.network_quad is None:
-                    from assembly.network_matrix import NetworkMatrixQuad
-                    self.network_quad = NetworkMatrixQuad()
-                self.network_buffer = matrix_buffer.PixelBuffer(config[1])
-                if protocol == 'sacn':
-                    self.network_receiver = sacn_receiver.Receiver(
-                        [matrix_channel_mapping(self.network_buffer, config[2], config[3],
-                                                config[4], protocol)])
-                else:
-                    description = '%s %dx%d u%d %dch/univ addr%d' % (
-                        self.artnet_node_name, config[1], config[1], config[2], config[3], config[4])
-                    self.network_receiver = artnet.Receiver(
-                        [matrix_channel_mapping(self.network_buffer, config[2], config[3],
-                                                config[4], protocol)],
-                        poll_broadcast=self.artnet_poll_broadcast,
-                        node_name=self.artnet_node_name, description=description)
-                self.network_config = config
-                self.state.update(error=None)
+            if self.network_buffer is None:
+                status = self.state.snapshot()['matrix_status']
+                status.setdefault('packets', 0)
+                status.setdefault('age', None)
+                status.setdefault('universes', 0)
+                self.state.update(matrix_status=status)
+                return
             pixels = self.network_buffer.snapshot()
-            status = self.network_receiver.status()
+            receiver = self.network_dmx_receivers[protocol]
+            status = receiver.status()
+            status.update(receiver.mapping_status(self.network_mappings['matrix']))
             status['universes'] = validate_matrix_config(
                 config[1], config[2], config[3], config[4], protocol)
             self.network_quad.setRGB(pixels, config[1], config[1])
@@ -395,15 +434,124 @@ class InputRenderer:
         except (OSError, RuntimeError) as error:
             self.state.update(error='%s: %s' % (protocol.upper(), error))
 
-    def close_network_receiver(self):
-        if self.network_receiver is not None:
-            self.network_receiver.close()
-            self.network_receiver = None
-            self.network_buffer = None
-            self.network_config = None
-            self.state.update(matrix_status={})
+    def close_network_dmx_receiver(self):
+        for receiver in self.network_dmx_receivers.values():
+            receiver.close()
+        self.network_dmx_receivers.clear()
+        self.network_buffers.clear()
+        self.network_mappings.clear()
+        self.network_config = None
+        self.network_buffer = None
+        if hasattr(self, 'state'):
+            self.state.update(matrix_status={}, network_control_status={})
 
-    def close_receiver(self):
+    def configure_network_inputs(self, snapshot):
+        matrix_enabled = snapshot['input_mode'] == 'network_matrix'
+        control_enabled = snapshot['network_control_enabled']
+        config = (
+            matrix_enabled, snapshot['matrix_protocol'], snapshot['matrix_size'],
+            snapshot['matrix_artnet']['port_address'], snapshot['matrix_sacn']['universe'],
+            snapshot['matrix_channels_per_universe'], snapshot['matrix_start_address'],
+            control_enabled, snapshot['network_control_protocol'],
+            snapshot['network_control_artnet']['port_address'],
+            snapshot['network_control_sacn']['universe'],
+            snapshot['network_control_start_address'], self.artnet_node_name)
+        if config == self.network_config:
+            return
+        previous_config = self.network_config
+        previous_control = self.network_mappings.get('control')
+        for receiver in self.network_dmx_receivers.values():
+            receiver.close()
+        self.network_dmx_receivers.clear()
+        self.network_buffers.clear()
+        self.network_mappings.clear()
+        self.network_buffer = None
+        self.network_config = config
+        self.state.update(matrix_status={})
+        control_config_unchanged = (
+            previous_config is not None and previous_control is not None and
+            previous_config[7:12] == config[7:12])
+        if not control_enabled or not control_config_unchanged:
+            self.state.update(network_control_status={})
+        try:
+            self._create_network_dmx_receivers(snapshot, matrix_enabled, control_enabled)
+        except (OSError, RuntimeError, ValueError) as error:
+            for receiver in self.network_dmx_receivers.values():
+                receiver.close()
+            self.network_dmx_receivers.clear()
+            self.network_buffers.clear()
+            self.network_mappings.clear()
+            self.network_buffer = None
+            if control_enabled:
+                self.state.update(network_control_status={
+                    'error': str(error), 'packets': 0, 'age': None,
+                    'diagnostics': {}})
+            else:
+                self.state.update(error=str(error))
+
+    def _create_network_dmx_receivers(self, snapshot, matrix_enabled, control_enabled):
+        mappings_by_protocol = {}
+        if matrix_enabled:
+            protocol = snapshot['matrix_protocol']
+            universe = (snapshot['matrix_sacn']['universe'] if protocol == 'sacn'
+                        else snapshot['matrix_artnet']['port_address'])
+            buffer = matrix_buffer.PixelBuffer(snapshot['matrix_size'])
+            mapping = matrix_channel_mapping(buffer, universe,
+                snapshot['matrix_channels_per_universe'], snapshot['matrix_start_address'], protocol)
+            self.network_buffer = buffer
+            self.network_buffers['matrix'] = buffer
+            self.network_mappings['matrix'] = mapping
+            mappings_by_protocol.setdefault(protocol, []).append(mapping)
+        if control_enabled:
+            protocol = snapshot['network_control_protocol']
+            universe = (snapshot['network_control_sacn']['universe'] if protocol == 'sacn'
+                        else snapshot['network_control_artnet']['port_address'])
+            buffer = matrix_buffer.ChannelBuffer(DMX_CHANNELS)
+            mapping = ChannelMapping(DMX_CHANNELS, 512, universe,
+                                     snapshot['network_control_start_address'], sink=buffer)
+            self.network_buffers['control'] = buffer
+            self.network_mappings['control'] = mapping
+            mappings_by_protocol.setdefault(protocol, []).append(mapping)
+        for protocol, mappings in mappings_by_protocol.items():
+            if protocol == 'sacn':
+                receiver = sacn_receiver.Receiver(mappings)
+            else:
+                description = 'fbmserve Network Control/Matrix'
+                receiver = artnet.Receiver(mappings,
+                    poll_broadcast=self.artnet_poll_broadcast,
+                    node_name=self.artnet_node_name, description=description)
+            self.network_dmx_receivers[protocol] = receiver
+        if matrix_enabled and self.network_quad is None:
+            self.network_quad = NetworkMatrixQuad()
+
+    def apply_network_dmx(self, snapshot, now):
+        if not snapshot['network_control_enabled']:
+            self.state.update(network_control_status={})
+            return
+        protocol = snapshot['network_control_protocol']
+        receiver = self.network_dmx_receivers.get(protocol)
+        mapping = self.network_mappings.get('control')
+        buffer = self.network_buffers.get('control')
+        if receiver is None or mapping is None or buffer is None:
+            status = self.state.snapshot()['network_control_status']
+            if snapshot['network_control_enabled'] and status.get('error'):
+                return
+            self.state.update(network_control_status={})
+            return
+        status = receiver.status()
+        status.update(receiver.mapping_status(mapping))
+        status['protocol'] = protocol
+        status['universe'] = (snapshot['network_control_sacn']['universe'] if protocol == 'sacn'
+                              else snapshot['network_control_artnet']['port_address'])
+        self.state.update(network_control_status=status)
+        if (status['packets'] and status['age'] is not None and
+                status['age'] <= snapshot['network_control_hold']):
+            frame = bytes((0,)) + buffer.snapshot()
+            values = dmx_values(frame, 1, self.effects)
+            if values is not None:
+                snapshot.update(values)
+
+    def close_ndi_receiver(self):
         if self.ndi_receiver is not None:
             self.ndi_receiver.close()
         self.ndi_receiver = None
@@ -411,8 +559,8 @@ class InputRenderer:
         self.state.update(ndi_status={})
 
     def close(self):
-        self.close_network_receiver()
-        self.close_receiver()
+        self.close_network_dmx_receiver()
+        self.close_ndi_receiver()
         if self.dmx_receiver is not None:
             self.dmx_receiver.close()
 
@@ -446,8 +594,7 @@ class InputRenderer:
                 )):
                     self.schedule_autoplay()
                 if 'input_mode' in command['values']:
-                    self.close_receiver()
-                    self.close_network_receiver()
+                    self.close_ndi_receiver()
                     self.state.update(error=None)
                 if 'effect' in command['values'] and command['values']['effect'] != self.failed_effect:
                     self.failed_effect = None
@@ -622,6 +769,30 @@ class RequestHandler(BaseHTTPRequestHandler):
             values.update(matrix_protocol=protocol, matrix_size=size,
                           matrix_artnet=artnet_config, matrix_sacn=sacn_config,
                           matrix_channels_per_universe=channels, matrix_start_address=address)
+
+        control_keys = ('network_control_enabled', 'network_control_protocol',
+                        'network_control_artnet', 'network_control_sacn',
+                        'network_control_start_address', 'network_control_hold')
+        if any(key in payload for key in control_keys):
+            current = self.server.app_state.snapshot()
+            enabled = parse_bool(payload.get('network_control_enabled',
+                                             current['network_control_enabled']))
+            protocol = payload.get('network_control_protocol', current['network_control_protocol'])
+            artnet_config = payload.get('network_control_artnet', current['network_control_artnet'])
+            sacn_config = payload.get('network_control_sacn', current['network_control_sacn'])
+            address = payload.get('network_control_start_address',
+                                   current['network_control_start_address'])
+            hold = payload.get('network_control_hold', current['network_control_hold'])
+            if (isinstance(hold, bool) or not isinstance(hold, (int, float)) or
+                    not math.isfinite(hold) or hold < 0 or hold > 3600):
+                raise ValueError('Network Control hold must be from 0 to 3600 seconds')
+            validate_control_config(protocol, artnet_config, sacn_config, address)
+            values.update(network_control_enabled=enabled,
+                          network_control_protocol=protocol,
+                          network_control_artnet=artnet_config,
+                          network_control_sacn=sacn_config,
+                          network_control_start_address=address,
+                          network_control_hold=float(hold))
 
         if 'ndi_source' in payload:
             source = payload['ndi_source']
@@ -817,6 +988,12 @@ def load_state_file(filename, effect_ids, led_effect_ids):
         values.setdefault('matrix_protocol', 'artnet')
         values.setdefault('matrix_channels_per_universe', 510)
         values.setdefault('matrix_start_address', 1)
+        values.setdefault('network_control_enabled', False)
+        values.setdefault('network_control_protocol', 'artnet')
+        values.setdefault('network_control_artnet', {'port_address': 0})
+        values.setdefault('network_control_sacn', {'universe': 1})
+        values.setdefault('network_control_start_address', 1)
+        values.setdefault('network_control_hold', 30.0)
         artnet_port = validate_matrix_protocol_config(values['matrix_artnet'], 'port_address', 'Art-Net')
         sacn_universe = validate_matrix_protocol_config(values['matrix_sacn'], 'universe', 'sACN')
         validate_matrix_config(values['matrix_size'], artnet_port,
@@ -825,6 +1002,15 @@ def load_state_file(filename, effect_ids, led_effect_ids):
                              values['matrix_channels_per_universe'], values['matrix_start_address'], protocol='sacn')
         if values['matrix_protocol'] not in ('artnet', 'sacn'):
             raise ValueError('unknown Network Matrix protocol')
+        validate_control_config(values['network_control_protocol'],
+                                values['network_control_artnet'],
+                                values['network_control_sacn'],
+                                values['network_control_start_address'])
+        if not isinstance(values['network_control_enabled'], bool):
+            raise ValueError('invalid Network Control enabled value')
+        hold = values['network_control_hold']
+        if isinstance(hold, bool) or not isinstance(hold, (int, float)) or not math.isfinite(hold) or not 0 <= hold <= 3600:
+            raise ValueError('invalid Network Control hold')
         if set(values) != set(AppState.persisted_keys()):
             raise ValueError('unexpected or missing fields')
         if values['effect'] not in effect_ids:

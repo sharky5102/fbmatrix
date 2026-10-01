@@ -379,7 +379,11 @@ web settings without changing or persisting them. The last valid DMX values
 remain active for 30 seconds after frames stop, configurable with `--dmx-hold`,
 before control returns to the web settings. Input mode and NDI source remain web
 settings. In NDI mode only the DMX brightness control affects the rendered
-output; effect, speed, and palette values are retained but unused.
+output; effect, speed, and palette values are retained but unused. Network
+Control uses the same profile and is configured independently of visual mode.
+Enable it below Emitter Shader, then choose Art-Net or sACN, universe, starting
+address, and signal-loss hold time. Its latest valid values overlay USB DMX and
+web settings while the signal remains within the configured hold time.
 
 `GET /api/state` returns `color1`, `color2`, and `color3` as RGB arrays with
 three numeric components from 0 to 1. `POST /api/state` accepts partial updates,

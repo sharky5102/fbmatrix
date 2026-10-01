@@ -82,6 +82,8 @@ class Receiver:
         self.diagnostics_lock = threading.Lock()
         self.packets = 0
         self.last_packet = None
+        self.mapping_packets = Counter()
+        self.mapping_last_packet = {}
         self.error = None
         self.last_datagram = 'none'
         self.next_debug = 0.0
@@ -161,6 +163,11 @@ class Receiver:
                     accepted = self._deliver(mapped, packet.universe, packet.dmxData)
         if accepted:
             self._record('accepted', packet=True)
+            received_at = time.monotonic()
+            with self.diagnostics_lock:
+                for mapping, _change in mapped:
+                    self.mapping_packets[mapping] += 1
+                    self.mapping_last_packet[mapping] = received_at
         if logger.isEnabledFor(logging.DEBUG):
             self._log_packet(packet, accepted)
 
@@ -185,7 +192,7 @@ class Receiver:
                 self.receiver.join_multicast(sync_address)
                 self.joined_sync_address = sync_address
             except OSError as error:
-                self.error = str(error)
+                self._set_error(error)
 
     def _log_packet(self, packet, accepted):
         if logger.isEnabledFor(logging.DEBUG):
@@ -253,11 +260,22 @@ class Receiver:
                 self.packets += 1
                 self.last_packet = time.monotonic()
 
+    def _set_error(self, error):
+        with self.diagnostics_lock:
+            self.error = str(error)
+
     def status(self):
         with self.diagnostics_lock:
             age = None if self.last_packet is None else time.monotonic() - self.last_packet
             return {'packets': self.packets, 'age': age, 'error': self.error,
                     'universes': len(self.universe_numbers)}
+
+    def mapping_status(self, mapping):
+        with self.diagnostics_lock:
+            received_at = self.mapping_last_packet.get(mapping)
+            return {'packets': self.mapping_packets[mapping],
+                    'age': None if received_at is None else time.monotonic() - received_at,
+                    'error': self.error, 'diagnostics': dict(self.diagnostics)}
 
     def _deliver(self, mapped, universe, data):
         accepted = True
