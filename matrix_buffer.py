@@ -30,7 +30,7 @@ class PixelBuffer:
         self.error = None
         self.diagnostics = Counter()
 
-    def update_channels(self, universe, data, channel_offset=0):
+    def update_channels(self, universe, data, channel_offset=0, record_packet=True):
         """Apply slot values from one universe; partial packets preserve pixels."""
         if not self.start_universe <= universe < self.start_universe + self.universes:
             return self._reject('outside_universe_range')
@@ -42,10 +42,31 @@ class PixelBuffer:
         with self.lock:
             target = self._target_buffer_locked()
             target[offset:offset + count] = data[channel_offset:channel_offset + count]
-            self.packets += 1
-            self.diagnostics['accepted'] += 1
-            self.last_packet = time.monotonic()
+            if record_packet:
+                self.packets += 1
+                self.diagnostics['accepted'] += 1
+                self.last_packet = time.monotonic()
         return True
+
+    def update_channels_batch(self, changes):
+        """Apply several universe updates under one lock for frame sync."""
+        with self.lock:
+            for universe, data, channel_offset in changes:
+                if not self.start_universe <= universe < self.start_universe + self.universes:
+                    continue
+                index = universe - self.start_universe
+                first_capacity = self.channels_per_universe - self.start_address + 1
+                offset = first_capacity + (index - 1) * self.channels_per_universe if index else 0
+                capacity = first_capacity if index == 0 else self.channels_per_universe
+                count = min(max(0, len(data) - channel_offset), capacity,
+                            len(self.pixels) - offset)
+                self.pixels[offset:offset + count] = data[channel_offset:channel_offset + count]
+
+    def mark_packet_received(self, reason='accepted'):
+        with self.lock:
+            self.packets += 1
+            self.diagnostics[reason] += 1
+            self.last_packet = time.monotonic()
 
     def _target_buffer_locked(self):
         return self.pixels

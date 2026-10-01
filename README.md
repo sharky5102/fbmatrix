@@ -463,8 +463,11 @@ Partial updates leave other channels unchanged. The display starts black and
 holds its last image when updates stop. Art-Net updates appear immediately
 unless the sender uses ArtSync; with ArtSync, updates appear together when the
 sync packet arrives. If ArtSync stops for four seconds, Art-Net updates resume
-appearing immediately. sACN updates appear as they arrive; sACN synchronization
-is not currently supported.
+appearing immediately. sACN senders can mark data for a synchronization
+universe; fbmserve applies those updates together when that universe's sync
+packet arrives. If sync packets stop for 2.5 seconds, the sender's
+Force_Synchronization setting determines whether updates resume immediately or
+remain held until sync resumes.
 
 
 For help diagnosing a blank Network Matrix display, run `fbmserve.py` with
