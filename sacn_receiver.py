@@ -1,19 +1,16 @@
-"""sACN Network Matrix receiver backed by the ``sacn`` PyPI package.
+"""sACN channel receiver backed by the ``sacn`` PyPI package.
 
 The receiver tracks one synchronization universe at a time. If incoming data
 switches to another sync universe, it discards pending updates and clears the
-matrix before processing the new stream.
+channel sink before processing the new stream.
 """
 import logging
-import socket
 import threading
 import time
 
 import sacn
 from sacn.messages.sync_packet import SyncPacket
 from sacn.receiving.receiver_socket_udp import ReceiverSocketUDP
-
-from matrix_buffer import PixelBuffer, universe_count
 
 logger = logging.getLogger(__name__)
 PORT = 5568
@@ -68,18 +65,10 @@ def parse_sync_packet(packet):
         return None
 
 
-def validate_config(size, start_universe, channels_per_universe=510, start_address=1):
-    count = universe_count(size, channels_per_universe, start_address)
-    if type(start_universe) is not int or not 1 <= start_universe <= MAX_UNIVERSE - count + 1:
-        raise ValueError('Matrix universe range must fit within sACN universes 1 to 63999')
-    return count
-
-
-class Receiver(PixelBuffer):
-    def __init__(self, size=16, start_universe=1, channels_per_universe=510,
-                 start_address=1, bind_address='0.0.0.0'):
-        validate_config(size, start_universe, channels_per_universe, start_address)
-        super().__init__(size, start_universe, channels_per_universe, start_address)
+class Receiver:
+    """Receive sACN into a channel sink; the sink owns storage and mapping."""
+    def __init__(self, buffer, bind_address='0.0.0.0'):
+        self.buffer = buffer
         self.seen_universes = set()
         self.last_datagram = 'none'
         self.next_debug = 0.0
@@ -106,7 +95,7 @@ class Receiver(PixelBuffer):
         # starting the library's normal receive thread.
         sync_socket.handler_proxy.handler = self.receiver._handler
         try:
-            for universe in range(start_universe, start_universe + self.universes):
+            for universe in range(buffer.start_universe, buffer.start_universe + buffer.universes):
                 self.receiver.register_listener(
                     'universe', self._on_packet, universe=universe)
                 self.receiver.join_multicast(universe)
@@ -114,10 +103,8 @@ class Receiver(PixelBuffer):
         except Exception:
             self.receiver.stop()
             raise
-        logger.info('Listening on sACN UDP %d; matrix=%dx%d; universes=%d..%d; start channel=%d; packing=%d',
-                    PORT, size, size, start_universe,
-                    start_universe + self.universes - 1, start_address,
-                    channels_per_universe)
+        logger.info('Listening on sACN UDP %d; universes=%d..%d',
+                    PORT, buffer.start_universe, buffer.start_universe + buffer.universes - 1)
         self.debug_thread = None
         if logger.isEnabledFor(logging.DEBUG):
             self.debug_thread = threading.Thread(
@@ -126,41 +113,40 @@ class Receiver(PixelBuffer):
 
     def _on_packet(self, packet):
         if packet.dmxStartCode != 0:
-            self._reject('unsupported_start_code')
+            self.buffer._reject('unsupported_start_code')
             return
-        channel_offset = self.start_address - 1 if packet.universe == self.start_universe else 0
         sync_address = packet.syncAddr
         with self.sync_lock:
             if sync_address != self.sync_address:
                 self._switch_sync_address(sync_address)
 
             if sync_address == 0:
-                accepted = self.update_channels(
-                    packet.universe, packet.dmxData, channel_offset)
+                accepted = self.buffer.update_channels(
+                    packet.universe, packet.dmxData)
             elif sync_address != self.joined_sync_address:
-                self._reject('sync_join_error')
-                accepted = self.update_channels(
-                    packet.universe, packet.dmxData, channel_offset)
+                self.buffer._reject('sync_join_error')
+                accepted = self.buffer.update_channels(
+                    packet.universe, packet.dmxData)
             else:
                 now = time.monotonic()
                 active = (self.sync_seen and self.sync_last_packet is not None and
                           now - self.sync_last_packet < NETWORK_DATA_LOSS_TIMEOUT)
                 self.sync_force = packet.option_ForceSync
                 if active or (self.sync_seen and not packet.option_ForceSync):
-                    # Keep only the newest packet for each matrix universe. The
+                    # Keep only the newest packet for each data universe. The
                     # next matching sync packet publishes all pending universes.
-                    self.pending[packet.universe] = (packet.dmxData, channel_offset)
-                    self.mark_packet_received()
+                    self.pending[packet.universe] = packet.dmxData
+                    self.buffer.mark_packet_received()
                     accepted = True
                 else:
                     self.pending.pop(packet.universe, None)
-                    accepted = self.update_channels(
-                        packet.universe, packet.dmxData, channel_offset)
+                    accepted = self.buffer.update_channels(
+                        packet.universe, packet.dmxData)
         if logger.isEnabledFor(logging.DEBUG):
             self._log_packet(packet, accepted)
 
     def _switch_sync_address(self, sync_address):
-        """Reset to black and switch the single synchronization stream."""
+        """Clear the sink and switch the single synchronization stream."""
         old_address = self.joined_sync_address
         self.pending.clear()
         self.sync_seen = False
@@ -169,8 +155,7 @@ class Receiver(PixelBuffer):
         self.sync_sequence = None
         self.sync_address = sync_address
         self.joined_sync_address = None
-        with self.lock:
-            self.pixels[:] = bytes(len(self.pixels))
+        self.buffer.clear()
         if old_address is not None:
             self.receiver.leave_multicast(old_address)
         if sync_address != 0:
@@ -180,8 +165,8 @@ class Receiver(PixelBuffer):
                 self.receiver.join_multicast(sync_address)
                 self.joined_sync_address = sync_address
             except OSError as error:
-                with self.lock:
-                    self.error = str(error)
+                with self.buffer.lock:
+                    self.buffer.error = str(error)
 
     def _log_packet(self, packet, accepted):
         if logger.isEnabledFor(logging.DEBUG):
@@ -223,27 +208,21 @@ class Receiver(PixelBuffer):
             self.sync_sequence = sequence
             self.sync_seen = True
             self.sync_last_packet = now
-            changes = [(data_universe, data, offset)
-                       for data_universe, (data, offset) in self.pending.items()]
+            changes = list(self.pending.items())
             self.pending.clear()
             if changes:
-                self.update_channels_batch(changes)
-            with self.lock:
-                self.diagnostics['sync_published'] += bool(changes)
-                self.diagnostics['sync'] += 1
+                self.buffer.update_channels_batch(changes)
+            with self.buffer.lock:
+                self.buffer.diagnostics['sync_published'] += bool(changes)
+                self.buffer.diagnostics['sync'] += 1
 
     def _debug_report(self):
         now = time.monotonic()
         if now < self.next_debug:
             return
         self.next_debug = now + 1.0
-        pixels, status = self.snapshot()
-        logger.debug('RX totals=%s; observed universes (up to 32)=%s; last datagram: %s; '
-                     'buffer nonzero=%d/%d peak=%d last accepted age=%s',
-                     dict(self.diagnostics), sorted(self.seen_universes)[:32],
-                     self.last_datagram, sum(value != 0 for value in pixels),
-                     len(pixels), max(pixels),
-                     None if status['age'] is None else round(status['age'], 2))
+        logger.debug('RX totals=%s; observed universes (up to 32)=%s; last datagram: %s',
+                     dict(self.buffer.diagnostics), sorted(self.seen_universes), self.last_datagram)
 
     def close(self):
         self.stopped.set()

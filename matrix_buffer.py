@@ -17,6 +17,13 @@ def universe_count(size, channels_per_universe, start_address):
 
 
 class PixelBuffer:
+    """Channel sink mapping complete DMX slot arrays to RGB pixels.
+
+    Receivers pass untrimmed channels, starting at slot 1, and own sync timing.
+    begin_sync/publish_sync/end_sync stage Art-Net updates; sACN publishes
+    (universe, channels) batches atomically. clear discards visible and staged
+    values. Reception counters include staged packets, not just published ones.
+    """
     def __init__(self, size, start_universe, channels_per_universe, start_address):
         self.universes = universe_count(size, channels_per_universe, start_address)
         self.channels_per_universe = channels_per_universe
@@ -24,16 +31,36 @@ class PixelBuffer:
         self.size = size
         self.start_universe = start_universe
         self.pixels = bytearray(size * size * 3)
+        self.staging_pixels = None
         self.lock = threading.Lock()
         self.packets = 0
         self.last_packet = None
         self.error = None
         self.diagnostics = Counter()
 
-    def update_channels(self, universe, data, channel_offset=0, record_packet=True):
+    def clear(self):
+        with self.lock:
+            self.pixels[:] = bytes(len(self.pixels))
+            self.staging_pixels = None
+
+    def begin_sync(self):
+        with self.lock:
+            self.staging_pixels = bytearray(self.pixels)
+
+    def publish_sync(self):
+        with self.lock:
+            self.pixels[:] = self.staging_pixels
+
+    def end_sync(self):
+        with self.lock:
+            self.staging_pixels = None
+
+    def update_channels(self, universe, data, channel_offset=None, record_packet=True):
         """Apply slot values from one universe; partial packets preserve pixels."""
         if not self.start_universe <= universe < self.start_universe + self.universes:
             return self._reject('outside_universe_range')
+        if channel_offset is None:
+            channel_offset = self.start_address - 1 if universe == self.start_universe else 0
         index = universe - self.start_universe
         first_capacity = self.channels_per_universe - self.start_address + 1
         offset = first_capacity + (index - 1) * self.channels_per_universe if index else 0
@@ -51,7 +78,8 @@ class PixelBuffer:
     def update_channels_batch(self, changes):
         """Apply several universe updates under one lock for frame sync."""
         with self.lock:
-            for universe, data, channel_offset in changes:
+            for universe, data in changes:
+                channel_offset = self.start_address - 1 if universe == self.start_universe else 0
                 if not self.start_universe <= universe < self.start_universe + self.universes:
                     continue
                 index = universe - self.start_universe
@@ -69,7 +97,7 @@ class PixelBuffer:
             self.last_packet = time.monotonic()
 
     def _target_buffer_locked(self):
-        return self.pixels
+        return self.pixels if self.staging_pixels is None else self.staging_pixels
 
     def _reject(self, reason):
         with self.lock:
@@ -83,3 +111,14 @@ class PixelBuffer:
                 'packets': self.packets, 'age': age, 'error': self.error,
                 'universes': self.universes,
             }
+
+def validate_config(size, start_universe, channels_per_universe=510, start_address=1,
+                    protocol='artnet'):
+    count = universe_count(size, channels_per_universe, start_address)
+    if protocol not in ('artnet', 'sacn'):
+        raise ValueError('Unknown matrix protocol')
+    minimum, maximum = (1, 63999) if protocol == 'sacn' else (0, 32767)
+    if type(start_universe) is not int or not minimum <= start_universe <= maximum - count + 1:
+        raise ValueError('Matrix universe range must fit within %s universes %d to %d' %
+                         (protocol, minimum, maximum))
+    return count

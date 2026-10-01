@@ -1,15 +1,9 @@
-"""ArtDmx input: RGB pixels in top-left row order, with 510/512-channel packing.
-
-Wire format: https://art-net.org.uk/downloads/art-net.pdf (ArtDmx).
-Art-Net transports DMX channel values; their interpretation as RGB pixels and
-the selected channel packing are our matrix profile, not requirements of Art-Net.
-"""
+"""Art-Net reception and discovery, independent of channel interpretation."""
 import logging
 import ipaddress
 import socket
 import threading
 import time
-from matrix_buffer import PixelBuffer, universe_count
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +19,6 @@ MAX_DMX_CHANNELS = 512
 ART_POLL_REPLY_SIZE = 240
 ART_POLL_REPLY_PORT_LIMIT = 4
 ART_POLL_TARGETED = 0x20
-PIXELS_PER_UNIVERSE = 170
-RGB_CHANNELS_PER_UNIVERSE = PIXELS_PER_UNIVERSE * 3
-
-
-def validate_config(size, start_universe, channels_per_universe=510, start_address=1):
-    count = universe_count(size, channels_per_universe, start_address)
-    if type(start_universe) is not int or not 0 <= start_universe <= 32768 - count:
-        raise ValueError('Matrix universe range must fit within 0 to 32767')
-    return count
 
 
 def validate_node_name(name):
@@ -60,10 +45,9 @@ def poll_reply_groups(start_universe, universe_count):
     return groups
 
 
-def build_poll_replies(ip_address, size, start_universe, channels_per_universe,
-                       start_address, targeted_range=None, node_name='fbmserve'):
+def build_poll_replies(ip_address, start_universe, count,
+                       targeted_range=None, node_name='fbmserve', description=None):
     """Build one ArtPollReply per advertised group of up to four universes."""
-    count = validate_config(size, start_universe, channels_per_universe, start_address)
     node_name = validate_node_name(node_name)
     addresses = range(start_universe, start_universe + count)
     if targeted_range is not None:
@@ -73,9 +57,7 @@ def build_poll_replies(ip_address, size, start_universe, channels_per_universe,
 
     ip_bytes = ipaddress.IPv4Address(ip_address).packed
     short_name = b'fbmserve'[:17].ljust(18, b'\0')
-    long_name = ('%s %dx%d u%d %dch/univ addr%d' %
-                 (node_name, size, size, start_universe,
-                  channels_per_universe, start_address)).encode('ascii').ljust(64, b'\0')
+    long_name = (description or node_name).encode('ascii')[:63].ljust(64, b'\0')
     packets = []
     for group_index, group in enumerate(poll_reply_groups(start_universe, count), start=1):
         reply = bytearray(ART_POLL_REPLY_SIZE)
@@ -91,8 +73,7 @@ def build_poll_replies(ip_address, size, start_universe, channels_per_universe,
         reply[44:108] = long_name
         reply[108:172] = b'#0001 [0000] Network Matrix'.ljust(64, b'\0')
         reply[172:174] = len(group).to_bytes(2, 'big')
-        # The matrix consumes ArtDmx and presents the received image, so it is
-        # an Art-Net output port (bit 7), rather than a DMX input port (bit 6).
+        # An ArtDmx consumer is an output port (bit 7).
         reply[174:178] = bytes([0x80] * len(group)) + bytes(4 - len(group))
         reply[190:194] = bytes(address & 0x0f for address in group) + bytes(4 - len(group))
         reply[200] = 0x02  # StMedia: Network Matrix acts as a media server.
@@ -103,22 +84,16 @@ def build_poll_replies(ip_address, size, start_universe, channels_per_universe,
     return packets
 
 
-class ArtDmxBuffer(PixelBuffer):
-    def __init__(self, size=16, start_universe=0, channels_per_universe=510,
-                 start_address=1, node_name='fbmserve'):
-        validate_config(size, start_universe, channels_per_universe, start_address)
-        self.node_name = validate_node_name(node_name)
-        super().__init__(size, start_universe, channels_per_universe, start_address)
-        self.staging_pixels = None
+class ArtDmxInput:
+    """Decode ArtDmx/ArtSync into a channel sink.
+
+    The sink exposes start_universe/universes, update_channels(), synchronization
+    methods, and reception diagnostics. It owns storage and channel mapping.
+    """
+    def __init__(self, buffer):
+        self.buffer = buffer
         self.last_sync = None
         self.last_dmx_source = None
-
-    def _target_buffer_locked(self):
-        if self.last_sync is not None and time.monotonic() - self.last_sync < 4.0:
-            return self.staging_pixels
-        self.last_sync = None
-        self.staging_pixels = None
-        return self.pixels
 
     def update(self, packet, source=None):
         # ArtDmx's fixed header (byte offsets, end exclusive):
@@ -146,21 +121,16 @@ class ArtDmxBuffer(PixelBuffer):
             # ArtSync is ID + opcode + protocol version + two auxiliary bytes.
             if len(packet) < 14:
                 return self._reject('short_sync')
-            with self.lock:
-                # Art-Net requires ArtSync to come from the most recent ArtDmx
-                # sender. Ignore unrelated controllers on the same network.
-                if self.last_dmx_source is not None and source != self.last_dmx_source:
-                    self.diagnostics['sync_source_mismatch'] += 1
-                    return False
-                now = time.monotonic()
-                if self.last_sync is None or now - self.last_sync >= 4.0:
-                    self.staging_pixels = bytearray(self.pixels)
-                else:
-                    self.pixels, self.staging_pixels = self.staging_pixels, self.pixels
-                    # Keep unchanged universes/pixels for the next partial frame.
-                    self.staging_pixels[:] = self.pixels
-                self.last_sync = now
-                self.diagnostics['sync'] += 1
+            if self.last_dmx_source is not None and source != self.last_dmx_source:
+                return self.buffer._reject('sync_source_mismatch')
+            now = time.monotonic()
+            if self.last_sync is None or now - self.last_sync >= 4.0:
+                self.buffer.begin_sync()
+            else:
+                self.buffer.publish_sync()
+            self.last_sync = now
+            with self.buffer.lock:
+                self.buffer.diagnostics['sync'] += 1
             return True
         if opcode != OP_DMX:
             return self._reject('other_opcode')
@@ -178,41 +148,27 @@ class ArtDmxBuffer(PixelBuffer):
             return self._reject('invalid_length')
         if len(packet) < DMX_HEADER_SIZE + length:
             return self._reject('truncated_payload')
-        if not self.start_universe <= universe < self.start_universe + self.universes:
+        if not self.buffer.start_universe <= universe < self.buffer.start_universe + self.buffer.universes:
             return self._reject('outside_universe_range')
-        # 510 mode leaves channels 511/512 unused, keeping RGB pixels intact.
-        # 512 mode packs all channels continuously, allowing pixels to span
-        # universes (e.g. R/G at 511/512, B at channel 1). Clip the final universe to
-        # the matrix size, and retain untouched channels on partial updates.
-        channel_offset = self.start_address - 1 if universe == self.start_universe else 0
-        accepted = self.update_channels(
-            universe, packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length],
-            channel_offset=channel_offset)
+        if self.last_sync is not None and time.monotonic() - self.last_sync >= 4.0:
+            self.last_sync = None
+            self.buffer.end_sync()
+        accepted = self.buffer.update_channels(
+            universe, packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length])
         if accepted and source is not None:
-            with self.lock:
-                self.last_dmx_source = source
+            self.last_dmx_source = source
         return accepted
 
     def _reject(self, reason):
-        with self.lock:
-            self.diagnostics[reason] += 1
-        return False
-
-    def snapshot(self):
-        with self.lock:
-            age = None if self.last_packet is None else time.monotonic() - self.last_packet
-            return bytes(self.pixels), {
-                'packets': self.packets, 'age': age, 'error': self.error,
-                'universes': self.universes,
-            }
+        return self.buffer._reject(reason)
 
 
-class Receiver(ArtDmxBuffer):
-    def __init__(self, size=16, start_universe=0, host='0.0.0.0', port=PORT,
-                 channels_per_universe=510, start_address=1, poll_broadcast=False,
-                 node_name='fbmserve'):
-        super().__init__(size, start_universe, channels_per_universe,
-                         start_address, node_name)
+class Receiver(ArtDmxInput):
+    def __init__(self, buffer, host='0.0.0.0', port=PORT, poll_broadcast=False,
+                 node_name='fbmserve', description=None):
+        super().__init__(buffer)
+        self.node_name = validate_node_name(node_name)
+        self.description = description
         self.poll_broadcast = poll_broadcast
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -226,9 +182,9 @@ class Receiver(ArtDmxBuffer):
         self.next_debug = 0.0
         self.last_datagram = 'none'
         self.seen_universes = set()
-        logger.debug('Listening on %s:%d; matrix=%dx%d; zero-based universes=%d..%d; start channel=%d; channel packing=%d',
-                     *self.socket.getsockname(), size, size, start_universe,
-                     start_universe + self.universes - 1, start_address, channels_per_universe)
+        logger.debug('Listening on %s:%d; universes=%d..%d',
+                     *self.socket.getsockname(), buffer.start_universe,
+                     buffer.start_universe + buffer.universes - 1)
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._receive, name='artnet', daemon=True)
         self.thread.start()
@@ -242,8 +198,8 @@ class Receiver(ArtDmxBuffer):
                 continue
             except OSError as error:
                 if not self.stopped.is_set():
-                    with self.lock:
-                        self.error = str(error)
+                    with self.buffer.lock:
+                        self.buffer.error = str(error)
                 return
             if (len(packet) >= 10 and packet[:8] == ARTNET_ID and
                     int.from_bytes(packet[8:10], 'little') == OP_POLL):
@@ -291,20 +247,19 @@ class Receiver(ArtDmxBuffer):
                 route.connect((sender[0], PORT))
                 node_ip = route.getsockname()[0]
             replies = build_poll_replies(
-                node_ip, self.size, self.start_universe,
-                self.channels_per_universe, self.start_address, targeted_range,
-                self.node_name)
+                node_ip, self.buffer.start_universe, self.buffer.universes,
+                targeted_range, self.node_name, self.description)
             destination = ('255.255.255.255' if self.poll_broadcast else sender[0], PORT)
             for reply in replies:
                 self.socket.sendto(reply, destination)
         except OSError as error:
-            with self.lock:
-                self.error = str(error)
+            with self.buffer.lock:
+                self.buffer.error = str(error)
             self._reject('poll_reply_error')
             logger.warning('Unable to reply to ArtPoll from %s: %s', sender[0], error)
             return False
-        self.diagnostics['poll'] += 1
-        self.diagnostics['poll_replies'] += len(replies)
+        self.buffer.diagnostics['poll'] += 1
+        self.buffer.diagnostics['poll_replies'] += len(replies)
         logger.debug('Replied to ArtPoll from %s with %d ArtPollReply packet(s) via %s',
                      sender[0], len(replies), 'broadcast' if self.poll_broadcast else 'unicast')
         return True
@@ -316,12 +271,8 @@ class Receiver(ArtDmxBuffer):
         if now < self.next_debug:
             return
         self.next_debug = now + 1.0
-        pixels, status = self.snapshot()
-        logger.debug('RX totals=%s; observed universes (up to 32)=%s; last datagram: %s; '
-                     'buffer nonzero=%d/%d peak=%d last accepted age=%s',
-                     dict(self.diagnostics), sorted(self.seen_universes), self.last_datagram,
-                     sum(value != 0 for value in pixels), len(pixels), max(pixels),
-                     None if status['age'] is None else round(status['age'], 2))
+        logger.debug('RX totals=%s; observed universes (up to 32)=%s; last datagram: %s',
+                     dict(self.buffer.diagnostics), sorted(self.seen_universes), self.last_datagram)
 
     def close(self):
         self.stopped.set()
