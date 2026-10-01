@@ -4,6 +4,7 @@ import ipaddress
 import socket
 import threading
 import time
+from channel_mapping import ChannelMapping
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +88,14 @@ def build_poll_replies(ip_address, start_universe, count,
 class ArtDmxInput:
     """Decode ArtDmx/ArtSync into a channel sink.
 
-    The sink exposes start_universe/universes, update_channels(), synchronization
-    methods, and reception diagnostics. It owns storage and channel mapping.
+    The sink exposes its required channel_count, offset writes, synchronization
+    methods, and diagnostics. This input owns universe and packing configuration.
     """
-    def __init__(self, buffer):
+    def __init__(self, buffer, start_universe=0, channels_per_universe=510,
+                 start_address=1):
         self.buffer = buffer
+        self.mapping = ChannelMapping(buffer.channel_count, channels_per_universe,
+                                      start_universe, start_address, 0, 32767)
         self.last_sync = None
         self.last_dmx_source = None
 
@@ -148,13 +152,13 @@ class ArtDmxInput:
             return self._reject('invalid_length')
         if len(packet) < DMX_HEADER_SIZE + length:
             return self._reject('truncated_payload')
-        if not self.buffer.start_universe <= universe < self.buffer.start_universe + self.buffer.universes:
+        change = self.mapping.map(universe, packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length])
+        if change is None:
             return self._reject('outside_universe_range')
         if self.last_sync is not None and time.monotonic() - self.last_sync >= 4.0:
             self.last_sync = None
             self.buffer.end_sync()
-        accepted = self.buffer.update_channels(
-            universe, packet[DMX_HEADER_SIZE:DMX_HEADER_SIZE + length])
+        accepted = self.buffer.write(*change)
         if accepted and source is not None:
             self.last_dmx_source = source
         return accepted
@@ -164,9 +168,11 @@ class ArtDmxInput:
 
 
 class Receiver(ArtDmxInput):
-    def __init__(self, buffer, host='0.0.0.0', port=PORT, poll_broadcast=False,
+    def __init__(self, buffer, start_universe=0, channels_per_universe=510,
+                 start_address=1,
+                 host='0.0.0.0', port=PORT, poll_broadcast=False,
                  node_name='fbmserve', description=None):
-        super().__init__(buffer)
+        super().__init__(buffer, start_universe, channels_per_universe, start_address)
         self.node_name = validate_node_name(node_name)
         self.description = description
         self.poll_broadcast = poll_broadcast
@@ -183,8 +189,8 @@ class Receiver(ArtDmxInput):
         self.last_datagram = 'none'
         self.seen_universes = set()
         logger.debug('Listening on %s:%d; universes=%d..%d',
-                     *self.socket.getsockname(), buffer.start_universe,
-                     buffer.start_universe + buffer.universes - 1)
+                     *self.socket.getsockname(), self.mapping.start_universe,
+                     self.mapping.start_universe + self.mapping.universes - 1)
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self._receive, name='artnet', daemon=True)
         self.thread.start()
@@ -247,7 +253,7 @@ class Receiver(ArtDmxInput):
                 route.connect((sender[0], PORT))
                 node_ip = route.getsockname()[0]
             replies = build_poll_replies(
-                node_ip, self.buffer.start_universe, self.buffer.universes,
+                node_ip, self.mapping.start_universe, self.mapping.universes,
                 targeted_range, self.node_name, self.description)
             destination = ('255.255.255.255' if self.poll_broadcast else sender[0], PORT)
             for reply in replies:
@@ -278,3 +284,8 @@ class Receiver(ArtDmxInput):
         self.stopped.set()
         self.thread.join()
         self.socket.close()
+
+
+def validate_config(channel_count, start_universe, channels_per_universe=510, start_address=1):
+    return ChannelMapping(channel_count, channels_per_universe, start_universe,
+                          start_address, 0, 32767).universes

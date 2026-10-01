@@ -4,33 +4,23 @@ import threading
 import time
 
 
-def universe_count(size, channels_per_universe, start_address):
+def channel_count(size):
     if type(size) is not int or size not in (16, 32, 64):
         raise ValueError('Matrix size must be 16, 32 or 64')
-    if type(channels_per_universe) is not int or channels_per_universe not in (510, 512):
-        raise ValueError('Channels per universe must be 510 or 512')
-    if type(start_address) is not int or not 1 <= start_address <= channels_per_universe:
-        raise ValueError('Start address must be within the selected universe channel range')
-    first_capacity = channels_per_universe - start_address + 1
-    remaining = max(0, size * size * 3 - first_capacity)
-    return 1 + (remaining + channels_per_universe - 1) // channels_per_universe
+    return size * size * 3
 
 
 class PixelBuffer:
-    """Channel sink mapping complete DMX slot arrays to RGB pixels.
+    """RGB storage accepting sequential channel blobs at zero-based offsets.
 
-    Receivers pass untrimmed channels, starting at slot 1, and own sync timing.
-    begin_sync/publish_sync/end_sync stage Art-Net updates; sACN publishes
-    (universe, channels) batches atomically. clear discards visible and staged
-    values. Reception counters include staged packets, not just published ones.
+    channel_count reports the required number of byte values. Universe packing,
+    addressing, and packet trimming are receiver concerns. Batch writes publish atomically without counting packets
+    again; those packets were counted when received and staged.
     """
-    def __init__(self, size, start_universe, channels_per_universe, start_address):
-        self.universes = universe_count(size, channels_per_universe, start_address)
-        self.channels_per_universe = channels_per_universe
-        self.start_address = start_address
+    def __init__(self, size):
+        self.channel_count = channel_count(size)
         self.size = size
-        self.start_universe = start_universe
-        self.pixels = bytearray(size * size * 3)
+        self.pixels = bytearray(self.channel_count)
         self.staging_pixels = None
         self.lock = threading.Lock()
         self.packets = 0
@@ -55,40 +45,26 @@ class PixelBuffer:
         with self.lock:
             self.staging_pixels = None
 
-    def update_channels(self, universe, data, channel_offset=None, record_packet=True):
-        """Apply slot values from one universe; partial packets preserve pixels."""
-        if not self.start_universe <= universe < self.start_universe + self.universes:
-            return self._reject('outside_universe_range')
-        if channel_offset is None:
-            channel_offset = self.start_address - 1 if universe == self.start_universe else 0
-        index = universe - self.start_universe
-        first_capacity = self.channels_per_universe - self.start_address + 1
-        offset = first_capacity + (index - 1) * self.channels_per_universe if index else 0
-        capacity = first_capacity if index == 0 else self.channels_per_universe
-        count = min(max(0, len(data) - channel_offset), capacity, len(self.pixels) - offset)
+    def write(self, offset, data):
+        """Write a channel blob, preserving untouched bytes and clipping the end."""
+        if type(offset) is not int or not 0 <= offset < self.channel_count:
+            return self._reject('outside_buffer_range')
+        self.write_batch([(offset, data)])
         with self.lock:
-            target = self._target_buffer_locked()
-            target[offset:offset + count] = data[channel_offset:channel_offset + count]
-            if record_packet:
-                self.packets += 1
-                self.diagnostics['accepted'] += 1
-                self.last_packet = time.monotonic()
+            self.packets += 1
+            self.diagnostics['accepted'] += 1
+            self.last_packet = time.monotonic()
         return True
 
-    def update_channels_batch(self, changes):
-        """Apply several universe updates under one lock for frame sync."""
+    def write_batch(self, changes):
+        """Publish (offset, data) blobs together under one lock."""
         with self.lock:
-            for universe, data in changes:
-                channel_offset = self.start_address - 1 if universe == self.start_universe else 0
-                if not self.start_universe <= universe < self.start_universe + self.universes:
+            target = self._target_buffer_locked()
+            for offset, data in changes:
+                if type(offset) is not int or not 0 <= offset < self.channel_count:
                     continue
-                index = universe - self.start_universe
-                first_capacity = self.channels_per_universe - self.start_address + 1
-                offset = first_capacity + (index - 1) * self.channels_per_universe if index else 0
-                capacity = first_capacity if index == 0 else self.channels_per_universe
-                count = min(max(0, len(data) - channel_offset), capacity,
-                            len(self.pixels) - offset)
-                self.pixels[offset:offset + count] = data[channel_offset:channel_offset + count]
+                count = min(len(data), self.channel_count - offset)
+                target[offset:offset + count] = data[:count]
 
     def mark_packet_received(self, reason='accepted'):
         with self.lock:
@@ -109,16 +85,4 @@ class PixelBuffer:
             age = None if self.last_packet is None else time.monotonic() - self.last_packet
             return bytes(self.pixels), {
                 'packets': self.packets, 'age': age, 'error': self.error,
-                'universes': self.universes,
             }
-
-def validate_config(size, start_universe, channels_per_universe=510, start_address=1,
-                    protocol='artnet'):
-    count = universe_count(size, channels_per_universe, start_address)
-    if protocol not in ('artnet', 'sacn'):
-        raise ValueError('Unknown matrix protocol')
-    minimum, maximum = (1, 63999) if protocol == 'sacn' else (0, 32767)
-    if type(start_universe) is not int or not minimum <= start_universe <= maximum - count + 1:
-        raise ValueError('Matrix universe range must fit within %s universes %d to %d' %
-                         (protocol, minimum, maximum))
-    return count

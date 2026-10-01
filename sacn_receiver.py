@@ -7,6 +7,7 @@ channel sink before processing the new stream.
 import logging
 import threading
 import time
+from channel_mapping import ChannelMapping
 
 import sacn
 from sacn.messages.sync_packet import SyncPacket
@@ -66,9 +67,12 @@ def parse_sync_packet(packet):
 
 
 class Receiver:
-    """Receive sACN into a channel sink; the sink owns storage and mapping."""
-    def __init__(self, buffer, bind_address='0.0.0.0'):
+    """Receive sACN into a channel sink; the receiver owns universe mapping."""
+    def __init__(self, buffer, start_universe=1, channels_per_universe=510,
+                 start_address=1, bind_address='0.0.0.0'):
         self.buffer = buffer
+        self.mapping = ChannelMapping(buffer.channel_count, channels_per_universe,
+                                      start_universe, start_address, 1, MAX_UNIVERSE)
         self.seen_universes = set()
         self.last_datagram = 'none'
         self.next_debug = 0.0
@@ -95,7 +99,7 @@ class Receiver:
         # starting the library's normal receive thread.
         sync_socket.handler_proxy.handler = self.receiver._handler
         try:
-            for universe in range(buffer.start_universe, buffer.start_universe + buffer.universes):
+            for universe in range(self.mapping.start_universe, self.mapping.start_universe + self.mapping.universes):
                 self.receiver.register_listener(
                     'universe', self._on_packet, universe=universe)
                 self.receiver.join_multicast(universe)
@@ -104,7 +108,7 @@ class Receiver:
             self.receiver.stop()
             raise
         logger.info('Listening on sACN UDP %d; universes=%d..%d',
-                    PORT, buffer.start_universe, buffer.start_universe + buffer.universes - 1)
+                    PORT, self.mapping.start_universe, self.mapping.start_universe + self.mapping.universes - 1)
         self.debug_thread = None
         if logger.isEnabledFor(logging.DEBUG):
             self.debug_thread = threading.Thread(
@@ -115,18 +119,20 @@ class Receiver:
         if packet.dmxStartCode != 0:
             self.buffer._reject('unsupported_start_code')
             return
+        change = self.mapping.map(packet.universe, packet.dmxData)
+        if change is None:
+            self.buffer._reject('outside_universe_range')
+            return
         sync_address = packet.syncAddr
         with self.sync_lock:
             if sync_address != self.sync_address:
                 self._switch_sync_address(sync_address)
 
             if sync_address == 0:
-                accepted = self.buffer.update_channels(
-                    packet.universe, packet.dmxData)
+                accepted = self.buffer.write(*change)
             elif sync_address != self.joined_sync_address:
                 self.buffer._reject('sync_join_error')
-                accepted = self.buffer.update_channels(
-                    packet.universe, packet.dmxData)
+                accepted = self.buffer.write(*change)
             else:
                 now = time.monotonic()
                 active = (self.sync_seen and self.sync_last_packet is not None and
@@ -135,13 +141,12 @@ class Receiver:
                 if active or (self.sync_seen and not packet.option_ForceSync):
                     # Keep only the newest packet for each data universe. The
                     # next matching sync packet publishes all pending universes.
-                    self.pending[packet.universe] = packet.dmxData
+                    self.pending[packet.universe] = change
                     self.buffer.mark_packet_received()
                     accepted = True
                 else:
                     self.pending.pop(packet.universe, None)
-                    accepted = self.buffer.update_channels(
-                        packet.universe, packet.dmxData)
+                    accepted = self.buffer.write(*change)
         if logger.isEnabledFor(logging.DEBUG):
             self._log_packet(packet, accepted)
 
@@ -208,10 +213,10 @@ class Receiver:
             self.sync_sequence = sequence
             self.sync_seen = True
             self.sync_last_packet = now
-            changes = list(self.pending.items())
+            changes = list(self.pending.values())
             self.pending.clear()
             if changes:
-                self.buffer.update_channels_batch(changes)
+                self.buffer.write_batch(changes)
             with self.buffer.lock:
                 self.buffer.diagnostics['sync_published'] += bool(changes)
                 self.buffer.diagnostics['sync'] += 1
@@ -229,3 +234,8 @@ class Receiver:
         self.receiver.stop()
         if self.debug_thread is not None:
             self.debug_thread.join()
+
+
+def validate_config(channel_count, start_universe, channels_per_universe=510, start_address=1):
+    return ChannelMapping(channel_count, channels_per_universe, start_universe,
+                          start_address, 1, MAX_UNIVERSE).universes
