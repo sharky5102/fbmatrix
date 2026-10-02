@@ -482,6 +482,8 @@ class InputRenderer:
             self.network_buffers.clear()
             self.network_mappings.clear()
             self.network_buffer = None
+            # A failed bind must be retried on the next render even when settings are unchanged.
+            self.network_config = None
             if control_enabled:
                 self.state.update(network_control_status={
                     'error': str(error), 'packets': 0, 'age': None,
