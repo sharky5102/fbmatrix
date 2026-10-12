@@ -125,7 +125,8 @@ def test_renderer_passes_palette_and_separate_brightness():
     snapshot = state.snapshot()
     renderer.quad.set_params.assert_called_once_with(
         mock.ANY, snapshot['color1'], snapshot['color2'], snapshot['color3'])
-    matrix.ledbuffer.set_params.assert_called_once_with(mock.ANY, 0.3)
+    matrix.ledbuffer.set_params.assert_called_once_with(
+        mock.ANY, 0.3, setup_mode=False)
 
 
 def test_speed_integrates_without_phase_jumps_and_zero_freezes():
