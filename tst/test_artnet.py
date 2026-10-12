@@ -98,6 +98,8 @@ def test_renderer_uploads_once_per_frame_and_reconfigures():
     renderer = fbmserve.InputRenderer('', [], 32, 32, state, queue.Queue())
     renderer.network_quad = mock.Mock()
     receiver = mock.Mock()
+    receiver.status.return_value = {'error': None}
+    receiver.mapping_status.return_value = {}
     with mock.patch.object(artnet, 'Receiver', return_value=receiver) as factory:
         renderer.render()
         renderer.render()
@@ -106,7 +108,7 @@ def test_renderer_uploads_once_per_frame_and_reconfigures():
         assert renderer.network_quad.render.call_count == 2
         state.update(matrix_size=32, matrix_artnet={'port_address': 10})
         renderer.render()
-        factory.assert_called_with(mock.ANY, poll_broadcast=False, node_name='fbmserve', description='fbmserve 32x32 u10 510ch/univ addr1'); assert factory.call_args.args[0][0].sink is renderer.network_buffer
+        factory.assert_called_with(mock.ANY, poll_broadcast=False, node_name='fbmserve', description='fbmserve Network Control/Matrix'); assert factory.call_args.args[0][0].sink is renderer.network_buffer
         assert receiver.close.call_count == 1
         state.update(input_mode='ndi')
         renderer.render()
@@ -210,7 +212,7 @@ def test_continuous_512_channel_packing(size, count):
 @pytest.mark.parametrize('channels', [0, 511, 513, True, '512', 512.0])
 def test_invalid_channel_packing(channels):
     with pytest.raises(ValueError):
-        validate_config(16, 0, channels_per_universe=channels)
+        validate_config(16, 0, channels=channels)
 
 
 def test_packing_changes_restart_receiver():
@@ -218,12 +220,14 @@ def test_packing_changes_restart_receiver():
     renderer = fbmserve.InputRenderer('', [], 32, 32, state, queue.Queue())
     renderer.network_quad = mock.Mock()
     receiver = mock.Mock()
+    receiver.status.return_value = {'error': None}
+    receiver.mapping_status.return_value = {}
     with mock.patch.object(artnet, 'Receiver', return_value=receiver) as factory:
         renderer.render()
         state.update(matrix_channels_per_universe=512)
         renderer.render()
         receiver.close.assert_called_once()
-        factory.assert_called_with(mock.ANY, poll_broadcast=False, node_name='fbmserve', description='fbmserve 16x16 u0 512ch/univ addr1'); assert factory.call_args.args[0][0].sink is renderer.network_buffer
+        factory.assert_called_with(mock.ANY, poll_broadcast=False, node_name='fbmserve', description='fbmserve Network Control/Matrix'); assert factory.call_args.args[0][0].sink is renderer.network_buffer
     renderer.close()
 
 

@@ -204,6 +204,8 @@ def test_renderer_selects_sacn_receiver_and_blits_shared_buffer():
     renderer = fbmserve.InputRenderer('', [], 32, 32, state, queue.Queue())
     renderer.network_quad = mock.Mock()
     receiver = mock.Mock()
+    receiver.status.return_value = {'error': None}
+    receiver.mapping_status.return_value = {}
     pixels = bytes([7] * (16 * 16 * 3))
     def make_receiver(buffer, **kwargs):
         buffer.write(0, bytes([7] * 510))

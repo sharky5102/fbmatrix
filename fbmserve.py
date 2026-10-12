@@ -501,6 +501,8 @@ class InputRenderer:
             self.network_buffers.clear()
             self.network_mappings.clear()
             self.network_buffer = None
+            # A failed bind must be retried on the next render even when settings are unchanged.
+            self.network_config = None
             if control_enabled:
                 self.state.update(network_control_status={
                     'error': str(error), 'packets': 0, 'age': None,
@@ -541,6 +543,8 @@ class InputRenderer:
                     node_name=self.artnet_node_name, description=description)
             self.network_dmx_receivers[protocol] = receiver
         if matrix_enabled and self.network_quad is None:
+            # Backend selection must precede the first OpenGL import.
+            from assembly.network_matrix import NetworkMatrixQuad
             self.network_quad = NetworkMatrixQuad()
 
     def apply_network_dmx(self, snapshot, now):

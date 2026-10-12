@@ -111,7 +111,7 @@ def test_every_app_state_field_has_a_serialization_policy(tmp_path):
         item.name for item in dataclasses.fields(fbmserve.AppState)
         if not item.metadata.get('persist', True)
     }
-    assert transient == {'error', 'ndi_status', 'matrix_status', 'state_file', 'lock'}
+    assert transient == {'error', 'ndi_status', 'matrix_status', 'network_control_status', 'state_file', 'lock'}
 
     filename = tmp_path / 'state.json'
     state = fbmserve.AppState('solid', state_file=filename)
