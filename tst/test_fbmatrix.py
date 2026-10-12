@@ -28,6 +28,7 @@ import geometry.simple
 import assembly.tree
 import fbmatrix
 import led_effect
+import setup_effect
 import ledlayout
 import calibration_protocol
 import shader_effect
@@ -356,7 +357,7 @@ class TestWS2811(unittest.TestCase):
         renderer = fbmatrix.renderer(
             display='ws2811', layout=layout, backend=test_backend)
         renderer.ledbuffer.set_effect_source(
-            led_effect.load_effect_source('led_effects', 'calibration'),
+            setup_effect.load_effect_source('setup_shaders', 'calibration'),
             effect_id='calibration')
         gl.glBindTexture(gl.GL_TEXTURE_2D,
                          renderer.ledbuffer.codebook_texture)

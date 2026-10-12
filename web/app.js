@@ -60,6 +60,7 @@ const canvas = document.getElementById('swatch');
 const workspaceEl = document.getElementById('workspace');
 const modeEffectEl = document.getElementById('mode-effect');
 const modeNetworkEl = document.getElementById('mode-network');
+const modeSetupEl = document.getElementById('mode-setup');
 const matrixChannelsEl = document.getElementById('matrix-channels');
 const matrixSizeEl = document.getElementById('matrix-size');
 const matrixAddressEl = document.getElementById('matrix-address');
@@ -93,6 +94,16 @@ async function request(path, options) {
     return response.json();
   }
   return response.text();
+}
+
+async function switchMode(mode) {
+  await updateState({ input_mode: mode });
+  state.led_effects = await request('/api/led-effects');
+  if (!state.led_effects.some((effect) => effect.id === state.led_effect)) {
+    const fallback = state.led_effects[0];
+    if (fallback) await updateState({ led_effect: fallback.id });
+  }
+  renderLedEffects();
 }
 
 async function init() {
@@ -183,8 +194,11 @@ function renderControls() {
   modeEffectEl.setAttribute('aria-pressed', String(effectMode));
   const ndiMode = state.input_mode === 'ndi';
   const networkMode = state.input_mode === 'network_matrix';
+  const setupMode = state.input_mode === 'setup';
   modeNetworkEl.classList.toggle('active', networkMode);
   modeNetworkEl.setAttribute('aria-pressed', String(networkMode));
+  modeSetupEl.classList.toggle('active', setupMode);
+  modeSetupEl.setAttribute('aria-pressed', String(setupMode));
   document.getElementById('network-panel').hidden = !networkMode;
   matrixSizeEl.value = state.matrix_size;
   matrixChannelsEl.value = state.matrix_channels_per_universe;
@@ -212,6 +226,11 @@ function renderControls() {
   modeNdiEl.classList.toggle('active', ndiMode);
   modeNdiEl.setAttribute('aria-pressed', String(ndiMode));
   workspaceEl.hidden = !effectMode;
+  document.getElementById('output-controls').hidden =
+    !(effectMode || ndiMode || networkMode || setupMode);
+  document.getElementById('output-settings').hidden = setupMode;
+  document.getElementById('led-effects').parentElement.querySelector('h2').textContent =
+    setupMode ? 'Setup' : 'Emitter shader';
   ndiPanelEl.hidden = !ndiMode;
   const ndiStatus = currentNdiStatus();
   ndiStatusEl.hidden = !ndiMode || !ndiStatus;
@@ -286,6 +305,10 @@ function setOnline(online, message) {
 }
 
 function currentStatus() {
+  if (state.input_mode === 'setup') {
+    const setupEffect = state.led_effects.find((item) => item.id === state.led_effect);
+    return setupEffect ? `Setup / ${setupEffect.name}` : 'Setup';
+  }
   if (state.input_mode === 'network_matrix') return `${state.matrix_protocol === 'sacn' ? 'sACN' : 'Art-Net'} / ${state.matrix_size} x ${state.matrix_size}`;
   if (state.input_mode === 'ndi') {
     if (!state.ndi_source) return 'Select an NDI source';
@@ -566,7 +589,8 @@ autoplayIntervalEl.addEventListener('change', () => updateState({
 matrixAddressEl.addEventListener('change', () => {
   if (matrixAddressEl.reportValidity()) updateState({ matrix_start_address: Number(matrixAddressEl.value) });
 });
-modeNetworkEl.addEventListener('click', () => updateState({ input_mode: 'network_matrix' }));
+modeNetworkEl.addEventListener('click', () => switchMode('network_matrix'));
+modeSetupEl.addEventListener('click', () => switchMode('setup'));
 matrixChannelsEl.addEventListener('change', () => {
   const channels = Number(matrixChannelsEl.value);
   const address = Math.min(state.matrix_start_address, channels);
@@ -584,8 +608,8 @@ matrixSacnStartEl.addEventListener('change', () => {
   });
 });
 matrixProtocolEl.addEventListener('change', () => updateState({ matrix_protocol: matrixProtocolEl.value }));
-modeEffectEl.addEventListener('click', () => updateState({ input_mode: 'effect' }));
-modeNdiEl.addEventListener('click', () => updateState({ input_mode: 'ndi' }));
+modeEffectEl.addEventListener('click', () => switchMode('effect'));
+modeNdiEl.addEventListener('click', () => switchMode('ndi'));
 ndiSourceEl.addEventListener('change', () => {
   if (ndiSourceEl.value) updateState({ ndi_source: ndiSourceEl.value, input_mode: 'ndi' });
 });

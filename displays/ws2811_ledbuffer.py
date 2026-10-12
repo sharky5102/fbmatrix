@@ -32,6 +32,7 @@ class ledbuffer(geometry.base):
         uniform highp float supersample;
         uniform highp float iTime;
         uniform highp float iBrightness;
+        uniform highp float setupMode;
         out highp vec4 f_color;
         in highp vec2 v_texcoor;
 
@@ -57,9 +58,10 @@ class ledbuffer(geometry.base):
                 return;
             }
             highp vec4 ledColor;
+            highp float effectEnabled = setupMode > 0.5 ? 1.0 : lamp0.w;
             mainLed(ledColor, lamp0.xyz, float(emitter.x), float(emitter.y),
-                    lamp0.w, lamp1.x, lamp1.y, lamp1.z);
-            if (lamp0.w <= 0.0)
+                    effectEnabled, lamp1.x, lamp1.y, lamp1.z);
+            if (setupMode < 0.5 && lamp0.w <= 0.0)
                 ledColor = vec4(0.0, 0.0, 0.0, 1.0);
             f_color = vec4(
                 clamp(ledColor.rgb * iBrightness, 0.0, 1.0),
@@ -77,6 +79,7 @@ class ledbuffer(geometry.base):
         self.tex = 0
         self.time = 0.0
         self.brightness = 1.0
+        self.setup_mode = False
         self.codebook_texture = 0
         self.set_effect_source(effect_source or led_effect.DEFAULT_LED_EFFECT,
                                compile_program=False)
@@ -139,14 +142,17 @@ class ledbuffer(geometry.base):
         gl.glUniform1f(gl.glGetUniformLocation(self.program, 'iTime'), self.time)
         gl.glUniform1f(gl.glGetUniformLocation(self.program, 'iBrightness'),
                        self.brightness)
+        gl.glUniform1f(gl.glGetUniformLocation(self.program, 'setupMode'),
+                       1.0 if self.setup_mode else 0.0)
         super().draw()
 
     def setTexture(self, tex):
         self.tex = tex
 
-    def set_params(self, now, brightness):
+    def set_params(self, now, brightness, setup_mode=False):
         self.time = now
         self.brightness = brightness
+        self.setup_mode = setup_mode
 
     def set_effect_source(self, source, compile_program=True, effect_id=None):
         if effect_id == 'calibration':

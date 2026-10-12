@@ -20,6 +20,7 @@
       <button id="mode-effect" type="button" data-mode="effect">Effect</button>
       <button id="mode-ndi" type="button" data-mode="ndi">NDI</button>
       <button id="mode-network" type="button" data-mode="network_matrix">Network Matrix</button>
+      <button id="mode-setup" type="button" data-mode="setup">Setup</button>
     </nav>
 
     <section class="workspace" id="workspace">
@@ -102,12 +103,12 @@
       <strong id="matrix-error" class="input-error" hidden></strong>
     </section>
 
-    <section class="output-controls" aria-label="Output controls">
+    <section class="output-controls" id="output-controls" aria-label="Output controls">
       <div>
         <h2>Emitter shader</h2>
         <nav class="effects" id="led-effects" aria-label="Emitter shaders"></nav>
       </div>
-      <div class="output-settings">
+      <div class="output-settings" id="output-settings">
         <label>
           <span>Brightness</span>
           <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
