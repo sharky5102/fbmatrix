@@ -4,6 +4,7 @@ import re
 import OpenGL.GL as gl
 
 import geometry
+import fit_to_leds
 
 
 class ShaderEffect(geometry.base):
@@ -28,6 +29,8 @@ class ShaderEffect(geometry.base):
         self.fragment_code = self.wrap_source(source)
         self.width = width
         self.height = height
+        self.fit_target_aspect = float(width) / height
+        self.fit_mode = 0
         self.time = 0.0
         self.colors = ((0.0, 0.0, 1.0), (1.0, 1.0, 0.0), (1.0, 0.0, 0.0))
         super(ShaderEffect, self).__init__()
@@ -41,7 +44,12 @@ class ShaderEffect(geometry.base):
         loc = gl.glGetUniformLocation(self.program, "iTime")
         gl.glUniform1f(loc, self.time)
         loc = gl.glGetUniformLocation(self.program, "iResolution")
-        gl.glUniform2f(loc, self.width, self.height)
+        gl.glUniform2f(loc, self.height, self.height)
+        gl.glUniform1f(gl.glGetUniformLocation(self.program, 'fitSourceAspect'), 1.0)
+        gl.glUniform1f(gl.glGetUniformLocation(self.program, 'fitTargetAspect'),
+                       self.fit_target_aspect)
+        gl.glUniform1i(gl.glGetUniformLocation(self.program, 'fitMode'),
+                       self.fit_mode)
         for index, color in enumerate(self.colors, start=1):
             loc = gl.glGetUniformLocation(self.program, 'iColor%d' % index)
             gl.glUniform3f(loc, *color)
@@ -50,6 +58,10 @@ class ShaderEffect(geometry.base):
     def set_params(self, now, color1, color2, color3):
         self.time = now
         self.colors = (color1, color2, color3)
+
+    def set_fit(self, mode, target_aspect):
+        self.fit_mode = fit_to_leds.mode_code(mode)
+        self.fit_target_aspect = float(target_aspect)
 
     @staticmethod
     def wrap_source(source):
@@ -66,12 +78,17 @@ class ShaderEffect(geometry.base):
             uniform highp vec3 iColor2;
             uniform highp vec3 iColor3;
 
-            """ + source + """
+            """ + fit_to_leds.GLSL + source + """
 
             void main()
             {
                 highp vec4 color;
-                mainImage(color, v_texcoor * iResolution);
+                highp float insideSource;
+                highp vec2 sourceUV = fitSourceUV(v_texcoor, insideSource);
+                if (insideSource < 0.5)
+                    color = vec4(0.0, 0.0, 0.0, 1.0);
+                else
+                    mainImage(color, sourceUV * iResolution);
                 f_color = color;
             } """
 

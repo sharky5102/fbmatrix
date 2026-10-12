@@ -31,6 +31,7 @@ from assembly.network_matrix import NetworkMatrixQuad
 
 
 DMX_CHANNELS = 12
+MAX_BRIGHTNESS = 4.0
 
 
 def fsync_directory(directory):
@@ -114,6 +115,7 @@ class AppState:
     network_control_status: dict = dataclasses.field(metadata={'persist': False})
     led_effect: str
     supersample: float
+    fit_mode: str
     ndi_status: dict = dataclasses.field(metadata={'persist': False})
     error: str | None = dataclasses.field(metadata={'persist': False})
     state_file: object = dataclasses.field(
@@ -137,6 +139,7 @@ class AppState:
         ndi_status=None,
         led_effect_id='default',
         supersample=3.0,
+        fit_mode='fill',
         state_file=None,
         led_effect=None,
         matrix_size=16,
@@ -201,6 +204,9 @@ class AppState:
         self.ndi_status = ndi_status or {}
         self.led_effect = led_effect_id if led_effect is None else led_effect
         self.supersample = supersample
+        if fit_mode not in ('fill', 'fit', 'stretch'):
+            raise ValueError('Unknown LED fit mode')
+        self.fit_mode = fit_mode
         self.error = None
         self.state_file = state_file
         if self.state_file is not None:
@@ -385,6 +391,7 @@ class InputRenderer:
 
         self.quad.set_params(self.effect_time, snapshot['color1'], snapshot['color2'],
                              snapshot['color3'])
+        self.quad.set_fit(snapshot['fit_mode'], float(self.width) / self.height)
         self.quad.render()
 
     def render_ndi(self, snapshot):
@@ -409,6 +416,7 @@ class InputRenderer:
                 self.state.update(error=str(e))
                 return
         try:
+            self.ndi_quad.set_fit(snapshot['fit_mode'], float(self.width) / self.height)
             self.ndi_receiver.receive_video(self.ndi_quad.setUYVY, timeout_ms=2)
             self.ndi_quad.render()
             now = time.monotonic()
@@ -440,6 +448,8 @@ class InputRenderer:
             status['universes'] = validate_matrix_config(
                 config[1], config[2], config[3], config[4], protocol)
             self.network_quad.setRGB(pixels, config[1], config[1])
+            self.network_quad.set_fit(snapshot['fit_mode'],
+                                      float(self.width) / self.height)
             self.network_quad.render()
             network_logger = sacn_receiver.logger if protocol == 'sacn' else artnet.logger
             if network_logger.isEnabledFor(logging.DEBUG) and time.monotonic() >= self.next_network_debug:
@@ -846,10 +856,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             values['speed'] = clamp(speed, 0.0, 4.0)
 
         if 'brightness' in payload:
-            values['brightness'] = clamp(float(payload['brightness']), 0.0, 1.0)
+            values['brightness'] = clamp(float(payload['brightness']), 0.0,
+                                          MAX_BRIGHTNESS)
 
         if 'supersample' in payload:
             values['supersample'] = clamp(float(payload['supersample']), 0.0, 16.0)
+
+        if 'fit_mode' in payload:
+            fit_mode = str(payload['fit_mode'])
+            if fit_mode not in ('fill', 'fit', 'stretch'):
+                raise ValueError('Unknown LED fit mode')
+            values['fit_mode'] = fit_mode
 
         if 'autoplay' in payload:
             values['autoplay'] = parse_bool(payload['autoplay'])
@@ -1024,6 +1041,7 @@ def load_state_file(filename, effect_ids, led_effect_ids):
         values.setdefault('matrix_protocol', 'artnet')
         values.setdefault('matrix_channels_per_universe', 510)
         values.setdefault('matrix_start_address', 1)
+        values.setdefault('fit_mode', 'fill')
         values.setdefault('network_control_enabled', False)
         values.setdefault('network_control_protocol', 'artnet')
         values.setdefault('network_control_artnet', {'port_address': 0})
@@ -1055,6 +1073,8 @@ def load_state_file(filename, effect_ids, led_effect_ids):
             raise ValueError('unknown LED effect')
         if values['input_mode'] not in ('effect', 'ndi', 'network_matrix', 'setup'):
             raise ValueError('unknown input mode')
+        if values['fit_mode'] not in ('fill', 'fit', 'stretch'):
+            raise ValueError('unknown LED fit mode')
         if values['ndi_source'] is not None and not isinstance(values['ndi_source'], str):
             raise ValueError('invalid NDI source')
         if not isinstance(values['autoplay_effects'], list) or any(
@@ -1067,7 +1087,7 @@ def load_state_file(filename, effect_ids, led_effect_ids):
             values[key] = validate_color(values[key])
         for key, low, high in (
             ('speed', 0.0, 4.0),
-            ('brightness', 0.0, 1.0),
+            ('brightness', 0.0, MAX_BRIGHTNESS),
             ('autoplay_interval', 1.0, 3600.0), ('supersample', 0.0, 16.0),
         ):
             value = values[key]
@@ -1113,7 +1133,8 @@ def main():
     for index, default in enumerate(('0,0,1', '1,1,0', '1,0,0'), start=1):
         parser.add_argument('--color%d' % index, type=parse_color, default=default,
                             help='Initial RGB color as R,G,B with components from 0 to 1')
-    parser.add_argument('--brightness', type=float, default=1.0, help='Initial brightness from 0.0 to 1.0')
+    parser.add_argument('--brightness', type=float, default=1.0,
+                        help='Initial brightness multiplier from 0.0 to 4.0')
     parser.add_argument('--speed', type=float, default=1.0,
                         help='Initial effect speed multiplier from 0.0 to 4.0')
     parser.add_argument('--autoplay', action='store_true', help='Randomly switch effects on the server')
@@ -1167,7 +1188,7 @@ def main():
         'color2': args.color2,
         'color3': args.color3,
         'speed': clamp(args.speed, 0.0, 4.0),
-        'brightness': clamp(args.brightness, 0.0, 1.0),
+        'brightness': clamp(args.brightness, 0.0, MAX_BRIGHTNESS),
         'autoplay': args.autoplay,
         'autoplay_interval': clamp(args.autoplay_interval, 1.0, 3600.0),
         'autoplay_effects': [item['id'] for item in effects],
@@ -1175,6 +1196,7 @@ def main():
         'ndi_source': None,
         'led_effect': 'default',
         'supersample': clamp(args.supersample, 0.0, 16.0),
+        'fit_mode': 'fill',
     }
     if args.state_file is not None:
         saved = load_state_file(

@@ -109,9 +109,19 @@
         <nav class="effects" id="led-effects" aria-label="Emitter shaders"></nav>
       </div>
       <div class="output-settings" id="output-settings">
+        <h2>Output</h2>
+        <label>
+          <span>Fit to LEDs</span>
+          <select id="fit-mode">
+            <option value="fill">Fill (keep aspect, crop to use all LEDs)</option>
+            <option value="fit">Fit to canvas (keep aspect, may leave LEDs black)</option>
+            <option value="stretch">Stretch (ignore aspect)</option>
+          </select>
+        </label>
+        <h2>Image quality</h2>
         <label>
           <span>Brightness</span>
-          <input id="brightness" type="range" min="0" max="1" step="0.001" value="1">
+          <input id="brightness" type="range" min="0" max="4" step="0.001" value="1">
         </label>
         <label>
           <span>Supersample</span>

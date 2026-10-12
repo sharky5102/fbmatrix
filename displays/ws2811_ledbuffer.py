@@ -38,12 +38,12 @@ class ledbuffer(geometry.base):
 
         highp vec4 sampleSource(vec3 ledPosition) {
             highp vec2 extent = source_bounds.yw - source_bounds.xz;
-            highp vec2 sourcePos = vec2(
+            highp vec2 ledPos = vec2(
                 extent.x == 0.0 ? 0.5
                     : (ledPosition.x - source_bounds.x) / extent.x,
                 extent.y == 0.0 ? 0.5
                     : (source_bounds.w - ledPosition.y) / extent.y);
-            return textureLod(tex, sourcePos, supersample);
+            return textureLod(tex, ledPos, supersample);
         }
 
         LED_EFFECT_SOURCE

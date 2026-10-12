@@ -351,7 +351,9 @@ the other effects use Colors 1 and 2. Black is a real color: elements assigned
 to a black slot go dark, without reassignment to another slot. Set the colors
 equal for a monochrome pattern. Autoplay retains the selected palette.
 The palette affects generated effects, not NDI video. Master brightness remains
-separate from the palette.
+separate from the palette and ranges from 0 to 4, with 1 representing the
+unboosted level. Values above 1 brighten the signal until LED output reaches
+its maximum.
 
 Effect speed is a multiplier from 0 to 4, defaults to 1, and is exposed as
 `speed` in the state API and as `--speed` on the command line. Zero freezes the

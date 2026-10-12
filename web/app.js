@@ -9,6 +9,7 @@ const state = {
   speed: 1,
   brightness: 1,
   supersample: 3,
+  fit_mode: 'fill',
   autoplay: false,
   autoplay_interval: 30,
   autoplay_effects: [],
@@ -52,6 +53,7 @@ const colorEls = colorKeys.map((key) => document.getElementById(key));
 const speedEl = document.getElementById('speed');
 const brightnessEl = document.getElementById('brightness');
 const supersampleEl = document.getElementById('supersample');
+const fitModeEl = document.getElementById('fit-mode');
 const autoplayEl = document.getElementById('autoplay');
 const autoplayIntervalEl = document.getElementById('autoplay-interval');
 const statusEl = document.getElementById('status');
@@ -189,6 +191,7 @@ function renderControls() {
   speedEl.value = state.speed;
   brightnessEl.value = state.brightness;
   supersampleEl.value = state.supersample;
+  fitModeEl.value = state.fit_mode || 'fill';
   autoplayEl.checked = state.autoplay;
   modeEffectEl.classList.toggle('active', effectMode);
   modeEffectEl.setAttribute('aria-pressed', String(effectMode));
@@ -437,12 +440,42 @@ function wrapFragmentSource(source) {
     uniform highp vec3 iColor2;
     uniform highp vec3 iColor3;
     uniform highp float iBrightness;
+    uniform highp float fitSourceAspect;
+    uniform highp float fitTargetAspect;
+    uniform highp int fitMode;
+
+    highp vec2 fitSourceUV(highp vec2 outputUV, out highp float insideSource) {
+      highp vec2 sourceUV = outputUV;
+      insideSource = 1.0;
+      if (fitMode == 0) {
+        if (fitSourceAspect > fitTargetAspect)
+          sourceUV.x = 0.5 + (outputUV.x - 0.5) * fitTargetAspect / fitSourceAspect;
+        else
+          sourceUV.y = 0.5 + (outputUV.y - 0.5) * fitSourceAspect / fitTargetAspect;
+      } else if (fitMode == 1) {
+        if (fitSourceAspect > fitTargetAspect) {
+          highp float occupied = fitTargetAspect / fitSourceAspect;
+          highp float bottom = (1.0 - occupied) * 0.5;
+          if (outputUV.y < bottom || outputUV.y > 1.0 - bottom) insideSource = 0.0;
+          sourceUV.y = (outputUV.y - bottom) / occupied;
+        } else {
+          highp float occupied = fitSourceAspect / fitTargetAspect;
+          highp float left = (1.0 - occupied) * 0.5;
+          if (outputUV.x < left || outputUV.x > 1.0 - left) insideSource = 0.0;
+          sourceUV.x = (outputUV.x - left) / occupied;
+        }
+      }
+      return sourceUV;
+    }
 
     ${stripVersion(source)}
 
     void main() {
       highp vec4 color;
-      mainImage(color, v_texcoor * iResolution);
+      highp float insideSource;
+      highp vec2 sourceUV = fitSourceUV(v_texcoor, insideSource);
+      if (insideSource < 0.5) color = vec4(0.0, 0.0, 0.0, 1.0);
+      else mainImage(color, sourceUV * iResolution);
       f_color = vec4(color.rgb * iBrightness, color.a);
     }`;
 }
@@ -505,12 +538,17 @@ function drawPreview() {
   gl.useProgram(preview.program);
 
   setUniform1f('iTime', preview.effect_time);
-  setUniform2f('iResolution', canvas.width, canvas.height);
+  setUniform2f('iResolution', canvas.height, canvas.height);
   colorKeys.forEach((key, index) => {
     const loc = gl.getUniformLocation(preview.program, `iColor${index + 1}`);
     gl.uniform3fv(loc, state[key]);
   });
   setUniform1f('iBrightness', Number(state.brightness));
+  setUniform1f('fitSourceAspect', 1);
+  setUniform1f('fitTargetAspect', canvas.width / canvas.height);
+  const fitMode = { fill: 0, fit: 1, stretch: 2 }[state.fit_mode || 'fill'];
+  const fitModeLocation = gl.getUniformLocation(preview.program, 'fitMode');
+  gl.uniform1i(fitModeLocation, fitMode);
 
   const position = gl.getAttribLocation(preview.program, 'position');
   gl.bindBuffer(gl.ARRAY_BUFFER, preview.buffer);
@@ -582,6 +620,7 @@ supersampleEl.addEventListener('input', () => {
   state.supersample = Number(supersampleEl.value);
   updateSupersample(state.supersample);
 });
+fitModeEl.addEventListener('change', () => updateState({ fit_mode: fitModeEl.value }));
 autoplayEl.addEventListener('change', () => updateState({ autoplay: autoplayEl.checked }));
 autoplayIntervalEl.addEventListener('change', () => updateState({
   autoplay_interval: Number(autoplayIntervalEl.value),
