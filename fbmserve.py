@@ -28,7 +28,6 @@ from channel_mapping import ChannelMapping
 import sacn_receiver
 import led_effect
 import setup_effect
-from assembly.network_matrix import NetworkMatrixQuad
 
 
 DMX_CHANNELS = 12
