@@ -23,6 +23,7 @@ else:
 import ndi
 import artnet
 import matrix_buffer
+import ledlayout
 from channel_mapping import ChannelMapping
 import sacn_receiver
 import led_effect
@@ -699,6 +700,22 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == '/api/layout':
+            matrix = self.server.matrix
+            layout = getattr(matrix, 'layout', None)
+            if layout:
+                lamps = ledlayout.flatten_string_layout(
+                    ledlayout.require_led_string_layout(layout))
+                points = [
+                    {'x': lamp[0], 'y': lamp[1],
+                     'enabled': lamp[3] > 0}
+                    for lamp in lamps
+                ]
+            else:
+                points = []
+            self.write_json({'points': points})
+            return
+
         if parsed.path == '/api/state':
             self.write_json(self.server.app_state.snapshot())
             return
@@ -1113,6 +1130,7 @@ def create_server(host, port, web_dir, effects_dir, state, commands,
     server.led_effects_dir = led_effects_dir
     server.setup_shaders_dir = setup_shaders_dir
     server.app_state = state
+    server.matrix = None
     server.commands = commands
     server.ndi_discovery = ndi_discovery
     server.ndi_error = ndi_error
@@ -1224,6 +1242,7 @@ def main():
     server = create_server(args.host, args.port, web_dir, effects_dir, state, commands,
                            ndi_discovery, ndi_error, led_effects_dir,
                            setup_shaders_dir)
+    server.matrix = matrix
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     print('fbmserve listening on http://%s:%d/' % (args.host, args.port))

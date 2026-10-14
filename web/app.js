@@ -84,6 +84,8 @@ const networkControlAddressEl = document.getElementById('network-control-address
 const networkControlHoldEl = document.getElementById('network-control-hold');
 const networkControlStatusEl = document.getElementById('network-control-status');
 const networkControlErrorEl = document.getElementById('network-control-error');
+const layoutPreviewEl = document.getElementById('layout-preview');
+let layoutPoints = [];
 
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -114,15 +116,83 @@ async function init() {
   try {
     state.effects = await request('/api/effects');
     state.led_effects = await request('/api/led-effects');
+    const layout = await request('/api/layout');
+    layoutPoints = layout.points;
     Object.assign(state, await request('/api/state'));
     await refreshNdiSources();
     renderControls();
+    drawLayoutPreview();
+    new ResizeObserver(drawLayoutPreview).observe(layoutPreviewEl);
     await loadPreviewEffect(state.effect);
     setOnline(true);
     requestAnimationFrame(drawPreview);
   } catch (error) {
     setOnline(false, error.message);
   }
+}
+
+function drawLayoutPreview() {
+  if (!layoutPreviewEl || !layoutPoints.length) return;
+  const rect = layoutPreviewEl.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const scale = window.devicePixelRatio || 1;
+  layoutPreviewEl.width = Math.round(rect.width * scale);
+  layoutPreviewEl.height = Math.round(rect.height * scale);
+  const ctx = layoutPreviewEl.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  const padding = 12;
+  const bounds = layoutPoints.reduce((result, point) => ({
+    minX: Math.min(result.minX, point.x), maxX: Math.max(result.maxX, point.x),
+    minY: Math.min(result.minY, point.y), maxY: Math.max(result.maxY, point.y),
+  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+  const dataWidth = bounds.maxX - bounds.minX || 1;
+  const dataHeight = bounds.maxY - bounds.minY || 1;
+  const aspect = dataWidth / dataHeight;
+  const availableWidth = Math.max(0, rect.width - padding * 2);
+  const availableHeight = Math.max(0, rect.height - padding * 2);
+  const mode = fitModeEl.value || state.fit_mode || 'fill';
+  const baseWidth = Math.min(availableWidth, availableHeight * aspect);
+  const baseHeight = Math.min(availableHeight, availableWidth / aspect);
+  const imageExtent = mode === 'stretch'
+    ? Math.max(baseWidth, baseHeight)
+    : mode === 'fit' ? Math.min(baseWidth, baseHeight)
+      : Math.max(baseWidth, baseHeight);
+  const contentScale = Math.min(0.92, availableWidth / imageExtent, availableHeight / imageExtent);
+  const drawWidth = baseWidth * contentScale;
+  const drawHeight = baseHeight * contentScale;
+  const left = (rect.width - drawWidth) / 2;
+  const top = (rect.height - drawHeight) / 2;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const point of layoutPoints) {
+    const x = left + (point.x - bounds.minX) / dataWidth * drawWidth;
+    const y = top + (point.y - bounds.minY) / dataHeight * drawHeight;
+    ctx.beginPath();
+    ctx.fillStyle = point.enabled ? '#ffffff' : 'rgba(115, 130, 140, 0.3)';
+    ctx.shadowColor = point.enabled ? 'rgba(40, 255, 170, 1)' : 'transparent';
+    ctx.shadowBlur = point.enabled ? 11 : 0;
+    ctx.arc(x, y, point.enabled ? 2.0 : 1.0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  let imageLeft = left;
+  let imageTop = top;
+  let imageWidth = drawWidth;
+  let imageHeight = drawHeight;
+  if (mode !== 'stretch') {
+    const side = mode === 'fit'
+      ? Math.min(drawWidth, drawHeight)
+      : Math.max(drawWidth, drawHeight);
+    imageLeft += (drawWidth - side) / 2;
+    imageTop += (drawHeight - side) / 2;
+    imageWidth = side;
+    imageHeight = side;
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.strokeStyle = 'rgba(110, 205, 255, 0.95)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(imageLeft, imageTop, imageWidth, imageHeight);
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 function initWebGL() {
@@ -231,7 +301,9 @@ function renderControls() {
   workspaceEl.hidden = !effectMode;
   document.getElementById('output-controls').hidden =
     !(effectMode || ndiMode || networkMode || setupMode);
-  document.getElementById('output-settings').hidden = setupMode;
+  document.getElementById('output-settings').hidden = !setupMode;
+  document.getElementById('image-quality-settings').hidden = setupMode;
+  document.getElementById('network-control-panel').hidden = !setupMode;
   document.getElementById('led-effects').parentElement.querySelector('h2').textContent =
     setupMode ? 'Setup' : 'Emitter shader';
   ndiPanelEl.hidden = !ndiMode;
@@ -620,7 +692,10 @@ supersampleEl.addEventListener('input', () => {
   state.supersample = Number(supersampleEl.value);
   updateSupersample(state.supersample);
 });
-fitModeEl.addEventListener('change', () => updateState({ fit_mode: fitModeEl.value }));
+fitModeEl.addEventListener('change', () => {
+  updateState({ fit_mode: fitModeEl.value });
+  drawLayoutPreview();
+});
 autoplayEl.addEventListener('change', () => updateState({ autoplay: autoplayEl.checked }));
 autoplayIntervalEl.addEventListener('change', () => updateState({
   autoplay_interval: Number(autoplayIntervalEl.value),
