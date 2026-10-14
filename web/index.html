@@ -103,14 +103,17 @@
       <strong id="matrix-error" class="input-error" hidden></strong>
     </section>
 
-    <section class="output-controls" id="output-controls" aria-label="Output controls">
-      <div>
+    <section class="output-controls" id="output-controls" aria-label="Layout and output controls">
+      <div id="led-effects-settings">
         <h2>Emitter shader</h2>
         <nav class="effects" id="led-effects" aria-label="Emitter shaders"></nav>
       </div>
       <div class="output-settings" id="output-settings">
-        <h2>Output</h2>
-        <canvas id="layout-preview" class="layout-preview" aria-label="Current LED layout preview"></canvas>
+        <h2>Layout</h2>
+        <div class="layout-preview-row">
+          <canvas id="layout-preview" class="layout-preview" aria-label="Current LED layout preview"></canvas>
+          <button id="capture-open" type="button">Capture LED positions</button>
+        </div>
         <label>
           <span>Fit to LEDs</span>
           <select id="fit-mode">
@@ -156,6 +159,36 @@
       <strong id="network-control-error" class="input-error" hidden></strong>
     </section>
   </main>
+
+  <dialog class="capture-modal" id="capture-modal" aria-labelledby="capture-title">
+    <div class="capture-modal-header">
+      <h2 id="capture-title">Capture LED positions</h2>
+      <button id="capture-close" class="capture-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div id="capture-count-step">
+      <p>How many LEDs should the phone scan?</p>
+      <label>
+        <span>LED count</span>
+        <select id="capture-pixel-count" required>
+          <option value="250">250</option>
+          <option value="500">500</option>
+          <option value="1000">1000</option>
+          <option value="1500">1500</option>
+          <option value="2000">2000</option>
+        </select>
+      </label>
+      <div class="capture-actions"><button id="capture-next" type="button">Next</button></div>
+    </div>
+    <div id="capture-qr-step" hidden>
+      <p>Scan this code with Flux Dynamics Capture to start calibration.</p>
+      <div class="capture-qr-frame"><img id="capture-qr-image" alt="QR code to open LED capture on your phone"></div>
+      <p id="capture-status" class="input-status" role="status" aria-live="polite"></p>
+      <label>
+        <span>Or upload a captured layout JSON file</span>
+        <input id="capture-layout-file" type="file" accept=".json,application/json">
+      </label>
+    </div>
+  </dialog>
 
   <script src="/app.js"></script>
 </body>

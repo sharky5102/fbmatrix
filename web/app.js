@@ -85,23 +85,56 @@ const networkControlHoldEl = document.getElementById('network-control-hold');
 const networkControlStatusEl = document.getElementById('network-control-status');
 const networkControlErrorEl = document.getElementById('network-control-error');
 const layoutPreviewEl = document.getElementById('layout-preview');
+const captureModalEl = document.getElementById('capture-modal');
+const captureOpenEl = document.getElementById('capture-open');
+const captureCloseEl = document.getElementById('capture-close');
+const captureCountStepEl = document.getElementById('capture-count-step');
+const captureQrStepEl = document.getElementById('capture-qr-step');
+const capturePixelCountEl = document.getElementById('capture-pixel-count');
+const captureNextEl = document.getElementById('capture-next');
+const captureQrImageEl = document.getElementById('capture-qr-image');
+const captureStatusEl = document.getElementById('capture-status');
+const captureLayoutFileEl = document.getElementById('capture-layout-file');
 let layoutPoints = [];
+let captureSession = null;
+let capturePollTimer = null;
 
 async function request(path, options) {
   const response = await fetch(path, options);
+  const contentType = response.headers.get('content-type') || '';
+  const body = await response.text();
   if (!response.ok) {
-    throw new Error(await response.text());
+    let message = body;
+    if (contentType.includes('application/json')) {
+      try {
+        const payload = JSON.parse(body);
+        if (payload.error) message = payload.error;
+      } catch (error) {
+        // Keep the original response text when it is not valid JSON.
+      }
+    }
+    throw new Error(message || `Request failed (${response.status})`);
   }
 
-  const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
-    return response.json();
+    return JSON.parse(body);
   }
-  return response.text();
+  return body;
+}
+
+function setCaptureStatus(message, isError = false) {
+  captureStatusEl.textContent = message;
+  captureStatusEl.classList.toggle('input-error', isError);
+  captureStatusEl.classList.toggle('input-status', !isError);
+  captureStatusEl.setAttribute('role', isError ? 'alert' : 'status');
+  captureStatusEl.setAttribute('aria-live', isError ? 'assertive' : 'polite');
 }
 
 async function switchMode(mode) {
-  await updateState({ input_mode: mode });
+  if (mode !== 'setup' && captureModalEl.open) await closeCaptureWorkflow();
+  await updateState(mode === 'setup'
+    ? { input_mode: mode, led_effect: 'layout_colors' }
+    : { input_mode: mode });
   state.led_effects = await request('/api/led-effects');
   if (!state.led_effects.some((effect) => effect.id === state.led_effect)) {
     const fallback = state.led_effects[0];
@@ -193,6 +226,123 @@ function drawLayoutPreview() {
   ctx.lineWidth = 1.5;
   ctx.strokeRect(imageLeft, imageTop, imageWidth, imageHeight);
   ctx.globalCompositeOperation = 'source-over';
+}
+
+function openCaptureWorkflow() {
+  captureCountStepEl.hidden = false;
+  captureQrStepEl.hidden = true;
+  const pixelOptions = new Set(['250', '500', '1000', '1500', '2000']);
+  const currentCount = String(layoutPoints.length);
+  capturePixelCountEl.value = pixelOptions.has(currentCount) ? currentCount : '250';
+  setCaptureStatus('');
+  captureLayoutFileEl.value = '';
+  captureLayoutFileEl.disabled = false;
+  captureSession = null;
+  captureModalEl.showModal();
+  capturePixelCountEl.focus();
+}
+
+async function startCaptureWorkflow() {
+  if (!capturePixelCountEl.reportValidity()) return;
+  const pixels = Number(capturePixelCountEl.value);
+  captureNextEl.disabled = true;
+  try {
+    const session = await request('/api/capture-sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pixels, origin: window.location.origin }),
+    });
+    if (!captureModalEl.open) {
+      await request(`/api/capture-sessions/${encodeURIComponent(session.token)}`, {
+        method: 'DELETE',
+        keepalive: true,
+      });
+      return;
+    }
+    captureSession = session;
+    await updateState({ led_effect: 'calibration' });
+    captureCountStepEl.hidden = true;
+    captureQrStepEl.hidden = false;
+    captureQrImageEl.src = captureSession.qr_url;
+    setCaptureStatus('Waiting for the phone to upload the captured layout.');
+    capturePollTimer = setInterval(checkCaptureSession, 2500);
+  } catch (error) {
+    setCaptureStatus(error.message, true);
+  } finally {
+    captureNextEl.disabled = false;
+  }
+}
+
+async function checkCaptureSession() {
+  if (!captureSession) return;
+  try {
+    const status = await request(`/api/capture-sessions/${encodeURIComponent(captureSession.token)}`);
+    if (status.uploaded) {
+      await finishCaptureUpload();
+    } else if (!status.active) {
+      clearInterval(capturePollTimer);
+      capturePollTimer = null;
+      setCaptureStatus('This capture session has ended. Close this dialog and start again.', true);
+    }
+  } catch (error) {
+    setCaptureStatus(error.message, true);
+  }
+}
+
+async function finishCaptureUpload(message = 'Layout uploaded and saved. Restart fbmserve to apply it.') {
+  clearInterval(capturePollTimer);
+  capturePollTimer = null;
+  setCaptureStatus(message);
+  captureLayoutFileEl.disabled = true;
+  const result = await request('/api/layout');
+  layoutPoints = result.points;
+  drawLayoutPreview();
+  await updateState({ led_effect: 'layout_colors' });
+  await closeCaptureWorkflow();
+}
+
+async function uploadCaptureFile() {
+  const file = captureLayoutFileEl.files[0];
+  if (!file || !captureSession) return;
+  setCaptureStatus('Uploading layout...');
+  captureLayoutFileEl.disabled = true;
+  try {
+    const result = await request(captureSession.upload_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: await file.text(),
+    });
+    await finishCaptureUpload(result.message);
+  } catch (error) {
+    setCaptureStatus(error.message, true);
+    captureLayoutFileEl.disabled = false;
+    captureLayoutFileEl.value = '';
+  }
+}
+
+async function closeCaptureWorkflow() {
+  clearInterval(capturePollTimer);
+  capturePollTimer = null;
+  const token = captureSession?.token;
+  captureSession = null;
+  if (token) {
+    try {
+      await request(`/api/capture-sessions/${encodeURIComponent(token)}`, {
+        method: 'DELETE',
+        keepalive: true,
+      });
+    } catch (error) {
+      console.warn('Could not close capture session:', error.message);
+    }
+  }
+  captureQrImageEl.removeAttribute('src');
+  captureLayoutFileEl.disabled = false;
+  captureCountStepEl.hidden = false;
+  captureQrStepEl.hidden = true;
+  if (captureModalEl.open) captureModalEl.close();
+  if (state.input_mode === 'setup' && state.led_effect !== 'layout_colors') {
+    await updateState({ led_effect: 'layout_colors' });
+  }
 }
 
 function initWebGL() {
@@ -301,11 +451,11 @@ function renderControls() {
   workspaceEl.hidden = !effectMode;
   document.getElementById('output-controls').hidden =
     !(effectMode || ndiMode || networkMode || setupMode);
+  document.getElementById('output-controls').classList.toggle('setup-mode', setupMode);
+  document.getElementById('led-effects-settings').hidden = setupMode;
   document.getElementById('output-settings').hidden = !setupMode;
   document.getElementById('image-quality-settings').hidden = setupMode;
   document.getElementById('network-control-panel').hidden = !setupMode;
-  document.getElementById('led-effects').parentElement.querySelector('h2').textContent =
-    setupMode ? 'Setup' : 'Emitter shader';
   ndiPanelEl.hidden = !ndiMode;
   const ndiStatus = currentNdiStatus();
   ndiStatusEl.hidden = !ndiMode || !ndiStatus;
@@ -724,6 +874,20 @@ matrixSacnStartEl.addEventListener('change', () => {
 matrixProtocolEl.addEventListener('change', () => updateState({ matrix_protocol: matrixProtocolEl.value }));
 modeEffectEl.addEventListener('click', () => switchMode('effect'));
 modeNdiEl.addEventListener('click', () => switchMode('ndi'));
+captureOpenEl.addEventListener('click', openCaptureWorkflow);
+captureCloseEl.addEventListener('click', closeCaptureWorkflow);
+captureNextEl.addEventListener('click', startCaptureWorkflow);
+captureLayoutFileEl.addEventListener('change', uploadCaptureFile);
+captureQrImageEl.addEventListener('error', () => {
+  setCaptureStatus('Could not generate the QR code. You can still upload a saved layout JSON file.', true);
+});
+captureModalEl.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  closeCaptureWorkflow();
+});
+captureModalEl.addEventListener('click', (event) => {
+  if (event.target === captureModalEl) closeCaptureWorkflow();
+});
 ndiSourceEl.addEventListener('change', () => {
   if (ndiSourceEl.value) updateState({ ndi_source: ndiSourceEl.value, input_mode: 'ndi' });
 });

@@ -5,3 +5,4 @@ pytest
 cffi
 ffpyplayer
 sacn>=1.11,<2
+qrcode>=7.4,<9

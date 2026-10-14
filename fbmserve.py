@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import copy
 import dataclasses
 import json
 import logging
@@ -8,12 +9,13 @@ import mimetypes
 import os
 import queue
 import random
+import secrets
 import sys
 import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 import common
 if sys.platform != 'win32':
@@ -32,6 +34,7 @@ import setup_effect
 
 DMX_CHANNELS = 12
 MAX_BRIGHTNESS = 4.0
+CAPTURE_SESSION_TTL = 180
 
 
 def fsync_directory(directory):
@@ -116,6 +119,7 @@ class AppState:
     led_effect: str
     supersample: float
     fit_mode: str
+    layout: list | None = dataclasses.field(metadata={'snapshot': False})
     ndi_status: dict = dataclasses.field(metadata={'persist': False})
     error: str | None = dataclasses.field(metadata={'persist': False})
     state_file: object = dataclasses.field(
@@ -140,6 +144,7 @@ class AppState:
         led_effect_id='default',
         supersample=3.0,
         fit_mode='fill',
+        layout=None,
         state_file=None,
         led_effect=None,
         matrix_size=16,
@@ -207,6 +212,8 @@ class AppState:
         if fit_mode not in ('fill', 'fit', 'stretch'):
             raise ValueError('Unknown LED fit mode')
         self.fit_mode = fit_mode
+        self.layout = (None if layout is None else
+                       ledlayout.require_led_string_layout(layout))
         self.error = None
         self.state_file = state_file
         if self.state_file is not None:
@@ -220,6 +227,10 @@ class AppState:
                 if item.metadata.get('snapshot', True)
             }
 
+    def layout_snapshot(self):
+        with self.lock:
+            return self._copy_collection(self.layout)
+
     @classmethod
     def persisted_keys(cls):
         return tuple(item.name for item in dataclasses.fields(cls)
@@ -227,11 +238,7 @@ class AppState:
 
     @staticmethod
     def _copy_collection(value):
-        if isinstance(value, list):
-            return list(value)
-        if isinstance(value, dict):
-            return dict(value)
-        return value
+        return copy.deepcopy(value)
 
     def update(self, **values):
         with self.lock:
@@ -700,8 +707,7 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == '/api/layout':
-            matrix = self.server.matrix
-            layout = getattr(matrix, 'layout', None)
+            layout = self.server.app_state.layout_snapshot()
             if layout:
                 lamps = ledlayout.flatten_string_layout(
                     ledlayout.require_led_string_layout(layout))
@@ -713,6 +719,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             else:
                 points = []
             self.write_json({'points': points})
+            return
+
+        if parsed.path.startswith('/api/capture-sessions/'):
+            self.handle_capture_session_get(parsed.path)
             return
 
         if parsed.path == '/api/state':
@@ -754,6 +764,12 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == '/api/capture-sessions':
+            self.create_capture_session()
+            return
+        if parsed.path.startswith('/api/capture/'):
+            self.receive_capture_upload(parsed.path)
+            return
         if parsed.path != '/api/state':
             self.send_error(404)
             return
@@ -768,7 +784,176 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         self.server.commands.put({'type': 'set_state', 'values': values})
         self.server.app_state.update(**values)
+        if values.get('input_mode', self.server.app_state.snapshot()['input_mode']) != 'setup':
+            self.deactivate_capture_sessions()
         self.write_json(self.server.app_state.snapshot())
+
+    def do_DELETE(self):
+        parts = urlparse(self.path).path.strip('/').split('/')
+        if len(parts) == 3 and parts[:2] == ['api', 'capture-sessions']:
+            with self.server.capture_lock:
+                self.server.capture_sessions.pop(parts[2], None)
+            self.write_json({'closed': True})
+            return
+        self.send_error(404)
+
+    def read_json_body(self, maximum_bytes=8 * 1024 * 1024):
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+        except ValueError as e:
+            raise ValueError('Invalid Content-Length') from e
+        if length <= 0 or length > maximum_bytes:
+            raise ValueError('Request body must be between 1 byte and %d bytes' % maximum_bytes)
+        try:
+            return json.loads(self.rfile.read(length).decode('utf-8-sig'))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise ValueError('Request body must contain valid UTF-8 JSON') from e
+
+    def create_capture_session(self):
+        if self.server.app_state.snapshot()['input_mode'] != 'setup':
+            self.write_json({'error': 'Capture sessions are only available in Setup'}, status=409)
+            return
+        try:
+            payload = self.read_json_body(4096)
+            if not isinstance(payload, dict):
+                raise ValueError('Expected an object')
+            pixel_count = payload.get('pixels')
+            if (isinstance(pixel_count, bool) or not isinstance(pixel_count, int) or
+                    not 1 <= pixel_count <= 28000):
+                raise ValueError('Pixel count must be between 1 and 28000')
+            origin = urlparse(str(payload.get('origin', '')))
+            if (origin.scheme not in ('http', 'https') or not origin.netloc or
+                    origin.username is not None or origin.password is not None or
+                    origin.path not in ('', '/') or origin.query or origin.fragment):
+                raise ValueError('Invalid page origin')
+            upload_url = '%s://%s/api/capture/%s' % (
+                origin.scheme, origin.netloc, secrets.token_urlsafe(24))
+            token = upload_url.rsplit('/', 1)[-1]
+            deep_link = 'flux-dynamics-capture://capture?' + urlencode({
+                'pixels': pixel_count, 'target': upload_url,
+            })
+            session = {
+                'pixels': pixel_count,
+                'upload_url': upload_url,
+                'deep_link': deep_link,
+                'last_seen': time.monotonic(),
+                'active': True,
+                'uploading': False,
+                'uploaded': False,
+            }
+            with self.server.capture_lock:
+                self.server.capture_sessions[token] = session
+            self.write_json({
+                'token': token,
+                'upload_url': upload_url,
+                'deep_link': deep_link,
+                'qr_url': '/api/capture-sessions/%s/qr.svg' % token,
+            })
+        except ValueError as e:
+            self.write_json({'error': str(e)}, status=400)
+
+    def handle_capture_session_get(self, request_path):
+        parts = request_path.strip('/').split('/')
+        if len(parts) not in (3, 4) or parts[:2] != ['api', 'capture-sessions']:
+            self.write_json({'error': 'Capture session unavailable'}, status=404)
+            return
+        token = parts[2]
+        with self.server.capture_lock:
+            session = self.server.capture_sessions.get(token)
+            if (session and session['active'] and
+                    time.monotonic() - session['last_seen'] > CAPTURE_SESSION_TTL):
+                session['active'] = False
+            if session and session['active']:
+                session['last_seen'] = time.monotonic()
+            if session and self.server.app_state.snapshot()['input_mode'] != 'setup':
+                session['active'] = False
+            if session is None:
+                self.write_json({'error': 'Capture session unavailable'}, status=404)
+                return
+            active = session['active']
+            uploaded = session['uploaded']
+            deep_link = session['deep_link']
+        if len(parts) == 4 and parts[3] == 'qr.svg':
+            if not active:
+                self.write_json({'error': 'Capture session unavailable'}, status=404)
+                return
+            try:
+                import qrcode
+                qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
+                                   border=4)
+                qr.add_data(deep_link)
+                qr.make(fit=True)
+                matrix = qr.get_matrix()
+            except ImportError:
+                self.write_json({'error': 'QR generation dependency is missing'}, status=503)
+                return
+            commands = ''.join('M%d,%dh1v1h-1z' % (x, y)
+                               for y, row in enumerate(matrix)
+                               for x, dark in enumerate(row) if dark)
+            size = len(matrix)
+            svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" '
+                   'shape-rendering="crispEdges"><rect width="100%%" height="100%%" '
+                   'fill="white"/><path d="%s" fill="black"/></svg>') % (
+                       size, size, commands)
+            data = svg.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/svg+xml')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if len(parts) != 3:
+            self.write_json({'error': 'Capture session unavailable'}, status=404)
+            return
+        self.write_json({'active': active, 'uploaded': uploaded})
+
+    def receive_capture_upload(self, request_path):
+        parts = request_path.strip('/').split('/')
+        if len(parts) != 3 or parts[:2] != ['api', 'capture']:
+            self.write_json({'error': 'Upload URL unavailable'}, status=404)
+            return
+        token = parts[2]
+        with self.server.capture_lock:
+            session = self.server.capture_sessions.get(token)
+            if (session and session['active'] and
+                    not session['uploading'] and
+                    time.monotonic() - session['last_seen'] <= CAPTURE_SESSION_TTL and
+                    self.server.app_state.snapshot()['input_mode'] == 'setup'):
+                session['uploading'] = True
+            else:
+                if session:
+                    session['active'] = False
+                self.write_json({'error': 'Upload URL unavailable'}, status=404)
+                return
+        try:
+            payload = self.read_json_body()
+            layout = ledlayout.require_led_string_layout(payload)
+            with self.server.capture_lock:
+                if (self.server.capture_sessions.get(token) is not session or
+                        not session['active'] or
+                        self.server.app_state.snapshot()['input_mode'] != 'setup'):
+                    raise ValueError('Upload URL unavailable')
+            self.server.app_state.update(layout=layout)
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            with self.server.capture_lock:
+                session['uploading'] = False
+            self.write_json({'error': str(e)}, status=400)
+            return
+        with self.server.capture_lock:
+            session['active'] = False
+            session['uploading'] = False
+            session['uploaded'] = True
+        self.write_json({
+            'success': True,
+            'restart_required': True,
+            'message': 'Layout saved. Restart fbmserve to apply it.',
+        })
+
+    def deactivate_capture_sessions(self):
+        with self.server.capture_lock:
+            for session in self.server.capture_sessions.values():
+                session['active'] = False
 
     def normalize_state(self, payload):
         if not isinstance(payload, dict):
@@ -1091,6 +1276,8 @@ def load_state_file(filename, effect_ids, led_effect_ids):
             raise ValueError('unknown input mode')
         if values['fit_mode'] not in ('fill', 'fit', 'stretch'):
             raise ValueError('unknown LED fit mode')
+        if values['layout'] is not None:
+            values['layout'] = ledlayout.require_led_string_layout(values['layout'])
         if values['ndi_source'] is not None and not isinstance(values['ndi_source'], str):
             raise ValueError('invalid NDI source')
         if not isinstance(values['autoplay_effects'], list) or any(
@@ -1114,8 +1301,24 @@ def load_state_file(filename, effect_ids, led_effect_ids):
         return values
     except FileNotFoundError:
         return None
-    except (OSError, ValueError, json.JSONDecodeError) as e:
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as e:
         print('Ignoring invalid state file %s: %s' % (filename, e),
+              file=sys.stderr)
+        return None
+
+
+def load_saved_layout(filename):
+    """Read the application-owned layout before creating the renderer."""
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            values = json.load(f)
+        if not isinstance(values, dict) or values.get('layout') is None:
+            return None
+        return ledlayout.require_led_string_layout(values['layout'])
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
+        print('Ignoring invalid saved layout in %s: %s' % (filename, e),
               file=sys.stderr)
         return None
 
@@ -1130,6 +1333,8 @@ def create_server(host, port, web_dir, effects_dir, state, commands,
     server.setup_shaders_dir = setup_shaders_dir
     server.app_state = state
     server.matrix = None
+    server.capture_sessions = {}
+    server.capture_lock = threading.Lock()
     server.commands = commands
     server.ndi_discovery = ndi_discovery
     server.ndi_error = ndi_error
@@ -1156,8 +1361,8 @@ def main():
                         help='Initial effect speed multiplier from 0.0 to 4.0')
     parser.add_argument('--autoplay', action='store_true', help='Randomly switch effects on the server')
     parser.add_argument('--autoplay-interval', type=float, default=30.0, help='Seconds between autoplay effect switches')
-    parser.add_argument('--state-file', default=None,
-                        help='Persist server state to this JSON file')
+    parser.add_argument('--state-file', default='fbmserve-state.json',
+                        help='Application state and LED layout JSON file')
     parser.add_argument('--dmx-device', default='/dev/dmx-in',
                         help='DMX input TTY (default: /dev/dmx-in)')
     parser.add_argument('--dmx-start', type=int, default=None,
@@ -1186,12 +1391,17 @@ def main():
         parser.error('--dmx-start must be between 1 and %d' % (513 - DMX_CHANNELS))
     if not math.isfinite(args.dmx_hold) or args.dmx_hold < 0:
         parser.error('--dmx-hold must be a finite, non-negative number')
-    matrix = common.renderer_from_args(args)
-
     effects_dir = os.path.abspath(args.effects_dir)
     led_effects_dir = os.path.abspath(args.led_effects_dir)
     setup_shaders_dir = os.path.abspath(args.setup_shaders_dir)
     web_dir = os.path.abspath(args.web_dir)
+    display = 'ws2811' if args.emulate else args.display
+    saved_layout = load_saved_layout(args.state_file)
+    layout = saved_layout
+    if display == 'ws2811' and layout is None:
+        layout = common.load_layout(args.layout)
+    matrix_layout = layout if display == 'ws2811' else None
+    matrix = common.renderer_from_args(args, layout_override=matrix_layout)
     effects = get_shader_effect().discover_effects(effects_dir)
     if not effects:
         raise RuntimeError('No effects found in %s' % effects_dir)
@@ -1214,6 +1424,7 @@ def main():
         'led_effect': 'default',
         'supersample': clamp(args.supersample, 0.0, 16.0),
         'fit_mode': 'fill',
+        'layout': layout,
     }
     if args.state_file is not None:
         saved = load_state_file(
@@ -1223,6 +1434,10 @@ def main():
              {item['id'] for item in setup_effect.discover_effects(setup_shaders_dir)}))
         if saved is not None:
             initial_state.update(saved)
+    if initial_state['input_mode'] == 'setup':
+        initial_state['led_effect'] = 'layout_colors'
+    if initial_state['layout'] is None and display == 'ws2811':
+        initial_state['layout'] = common.load_layout(args.layout)
     state = AppState(**initial_state, state_file=args.state_file)
     commands = queue.Queue()
     dmx_receiver = (DMXReceiver(args.dmx_device)

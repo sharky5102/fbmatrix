@@ -325,13 +325,16 @@ Add `--autoplay --autoplay-interval 20` to switch randomly between effects
 every 20 seconds. Autoplay is handled server-side, so it continues even when
 the browser UI is closed.
 
-Pass `--state-file /path/to/fbmserve-state.json` to preserve user-controlled
-settings across restarts, including the selected NDI source and input mode.
-Persistence is disabled when this option is omitted. State is replaced
-atomically and synced to durable storage after changes; an unreadable, corrupt, or obsolete state file is
-ignored and replaced with the command-line defaults. A saved NDI source does
-not need to be visible during startup: the receiver keeps trying that source
-so it can connect when the source comes online.
+User-controlled settings and the active LED layout are stored in
+`fbmserve-state.json` and persist across restarts. Pass `--state-file
+/path/to/fbmserve-state.json` to choose another location. State is replaced
+atomically and synced to durable storage after changes; an unreadable or
+obsolete state file is ignored and replaced with the command-line defaults.
+For WS2811 output, `--layout` supplies the initial layout until the application
+has saved one in its state file. A layout received through Setup is stored in
+that file; restart `fbmserve.py` to apply its new geometry to the LEDs. A saved
+NDI source does not need to be visible during startup: the receiver keeps
+trying that source so it can connect when the source comes online.
 
 `fbmserve.py` renders effects into a 4x source framebuffer by default before
 sampling them down to the LEDs. Use `--source-scale`, `--source-columns` or
@@ -344,6 +347,15 @@ multiplied by `--source-scale`. Exact `--source-columns` and `--source-rows`
 overrides are reserved for HUB75 and are rejected for WS2811.
 
 The browser UI is served from `web/`, and effects are loaded from `effects/`.
+
+In Setup, **Capture LED positions** creates a short-lived upload session and a
+QR code containing a `flux-dynamics-capture://` link. The phone app uploads the
+captured layout as JSON with `POST` to the session's `upload_url`; the body is
+the normal nested WS2811 layout array. The upload is accepted once and only
+while the browser remains in Setup. Closing the dialog or leaving Setup
+invalidates the URL. A JSON file can also be uploaded from the dialog. The
+captured layout is stored in application state and takes effect after
+restarting `fbmserve.py`.
 
 Effects use three RGB palette slots, always editable in the web UI. `solid`
 uses Color 1; `additive_bars` and `additive_lattice` use all three colors;
@@ -448,8 +460,8 @@ Select **Network Matrix** in the web UI, choose Art-Net or sACN, and choose
 protocol: Art-Net uses a zero-based Port-Address (default 0), while sACN uses
 a one-based universe (default 1). Set the one-based starting DMX address in
 the first universe (default 1). The two protocol addresses are saved
-separately, so switching protocols preserves each value. Settings are saved
-across restarts when `--state-file` is enabled.
+separately, so switching protocols preserves each value. Settings persist in
+`fbmserve-state.json` across restarts; `--state-file` selects another path.
 
 For Art-Net, fbmserve announces the configured matrix universes to network
 controllers. Set the advertised device name with `--artnet-name`; it defaults

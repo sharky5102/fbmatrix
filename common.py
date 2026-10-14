@@ -24,7 +24,8 @@ def add_args(parser):
     hub75.add_argument('--extract', default='bcm', help='HUB75 bitplane extraction mode')
 
     ws2811 = parser.add_argument_group('WS2811 options')
-    ws2811.add_argument('--layout', default='layout.json', help='JSON file containing WS2811 LED positions')
+    ws2811.add_argument('--layout', default='layout.json',
+                        help='Initial WS2811 layout used before one is saved in fbmserve state')
 
 
 def load_layout(filename):
@@ -40,11 +41,11 @@ def load_layout(filename):
     raise RuntimeError('Could not read layout JSON from %s: %s' % (filename, last_error))
 
 
-def renderer_from_args(args):
-    layout = None
+def renderer_from_args(args, layout_override=None):
+    layout = layout_override
     display = 'ws2811' if args.emulate else args.display
 
-    if display == 'ws2811':
+    if display == 'ws2811' and layout is None:
         layout = load_layout(args.layout)
 
     if args.source_scale <= 0:

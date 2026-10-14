@@ -4,3 +4,4 @@ bin/
 lib64
 *~
 tst/data/*.new
+fbmserve-state.json
