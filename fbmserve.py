@@ -763,6 +763,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.handle_capture_session_get(parsed.path)
             return
 
+        if parsed.path.startswith('/capture/'):
+            self.handle_capture_landing(parsed.path)
+            return
+
         if parsed.path == '/api/state':
             self.write_json(self.server.app_state.snapshot())
             return
@@ -873,10 +877,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             deep_link = 'flux-dynamics-capture://capture?' + urlencode({
                 'pixels': pixel_count, 'target': upload_url,
             })
+            launch_url = '%s://%s/capture/%s' % (
+                origin.scheme, origin.netloc, token)
             session = {
                 'pixels': pixel_count,
                 'upload_url': upload_url,
                 'deep_link': deep_link,
+                'launch_url': launch_url,
                 'last_seen': time.monotonic(),
                 'active': True,
                 'uploading': False,
@@ -889,6 +896,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 'upload_url': upload_url,
                 'deep_link': deep_link,
                 'qr_url': '/api/capture-sessions/%s/qr.svg' % token,
+                'launch_url': launch_url,
             })
         except ValueError as e:
             self.write_json({'error': str(e)}, status=400)
@@ -922,7 +930,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 import qrcode
                 qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
                                    border=4)
-                qr.add_data(deep_link)
+                qr.add_data(session['launch_url'])
                 qr.make(fit=True)
                 matrix = qr.get_matrix()
             except ImportError:
@@ -948,6 +956,24 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.write_json({'error': 'Capture session unavailable'}, status=404)
             return
         self.write_json({'active': active, 'uploaded': uploaded})
+
+    def handle_capture_landing(self, request_path):
+        parts = request_path.strip('/').split('/')
+        if len(parts) != 2 or parts[0] != 'capture':
+            self.send_error(404)
+            return
+        token = parts[1]
+        with self.server.capture_lock:
+            session = self.server.capture_sessions.get(token)
+            deep_link = session['deep_link'] if session else None
+        if deep_link is None:
+            self.send_error(404)
+            return
+        self.send_response(302)
+        self.send_header('Location', deep_link)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
 
     def receive_capture_upload(self, request_path):
         parts = request_path.strip('/').split('/')

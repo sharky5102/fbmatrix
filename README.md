@@ -296,7 +296,8 @@ overrides are reserved for HUB75 and are rejected for WS2811.
 The browser UI is served from `web/`, and effects are loaded from `effects/`.
 
 In Setup, **Capture LED positions** creates a short-lived upload session and a
-QR code containing a `flux-dynamics-capture://` link. The phone app uploads the
+QR code containing an HTTP link back to Halo. Open it with the phone camera,
+and Halo redirects to the Flux Dynamics Capture app. The phone app uploads the
 captured layout as JSON with `POST` to the session's `upload_url`; the body is
 the normal nested WS2811 layout array. The upload is accepted once and only
 while the browser remains in Setup. Closing the dialog or leaving Setup
