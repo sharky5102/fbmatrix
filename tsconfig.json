@@ -6,7 +6,7 @@
     "strict": false,
     "skipLibCheck": true,
     "rootDir": "web-src",
-    "outDir": "web/build",
+    "outDir": "build/fbmserve/web/build",
     "removeComments": false
   },
   "include": ["web-src/**/*.ts"]

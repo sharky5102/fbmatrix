@@ -6,4 +6,5 @@ lib64
 tst/data/*.new
 fbmserve-state.json
 node_modules/
-web/build/
+/build/
+*.egg-info/

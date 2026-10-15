@@ -275,8 +275,9 @@ python setup.py test
 
 `setup.py run` and `setup.py test` build the UI first. The TypeScript compiler
 runs under Node.js and is independent of the active Python virtual environment;
-the Python commands use whichever interpreter invokes `setup.py`. Running
-`fbmserve.py` directly serves the most recently built UI.
+the Python commands use whichever interpreter invokes `setup.py`. The compiled
+JavaScript and copied web assets are written under `build/fbmserve/web`, outside
+the source directories. Running `fbmserve.py` directly serves that built UI.
 
 `fbmserve.py` runs the normal FBMatrix renderer and starts a small HTTP server
 for selecting GLSL fragment shader effects with a live WebGL2 preview:

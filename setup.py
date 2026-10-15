@@ -7,9 +7,11 @@ import subprocess
 import sys
 
 from setuptools import Command, setup
+from setuptools.command.build_py import build_py
 
 
 ROOT = Path(__file__).resolve().parent
+BUILT_WEB = ROOT / 'build' / 'fbmserve' / 'web'
 
 
 class BuildFrontend(Command):
@@ -33,6 +35,15 @@ class BuildFrontend(Command):
                 'TypeScript is not installed. Run `npm ci` in the repository root '
                 'before starting fbmserve.')
         subprocess.run([npm, 'run', 'build'], cwd=ROOT, check=True)
+        BUILT_WEB.mkdir(parents=True, exist_ok=True)
+        for filename in ('index.html', 'style.css'):
+            shutil.copy2(ROOT / 'web' / filename, BUILT_WEB / filename)
+
+
+class BuildPython(build_py):
+    def run(self):
+        self.run_command('build_frontend')
+        super().run()
 
 
 class Run(Command):
@@ -47,8 +58,11 @@ class Run(Command):
 
     def run(self):
         self.run_command('build_frontend')
-        subprocess.run([sys.executable, str(ROOT / 'fbmserve.py'),
-                        *shlex.split(self.args or '')], cwd=ROOT, check=True)
+        args = shlex.split(self.args or '')
+        if '--web-dir' not in args:
+            args.extend(['--web-dir', str(BUILT_WEB)])
+        subprocess.run([sys.executable, str(ROOT / 'fbmserve.py'), *args],
+                       cwd=ROOT, check=True)
 
 
 class Test(Command):
@@ -67,10 +81,8 @@ class Test(Command):
 
 
 setup(
-    packages=[],
-    py_modules=[],
     cmdclass={
-        'build': BuildFrontend,
+        'build_py': BuildPython,
         'build_frontend': BuildFrontend,
         'run': Run,
         'test': Test,

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fbmatrix"
+version = "0.1.0"
+description = "HUB75 and WS281x framebuffer driver and tools"
+dependencies = [
+    "PyOpenGL",
+    "numpy",
+    "pyrr",
+    "cffi",
+    "ffpyplayer",
+    "sacn>=1.11,<2",
+    "qrcode>=7.4,<9",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools]
+py-modules = [
+    "artnet",
+    "calibration_protocol",
+    "channel_mapping",
+    "codes",
+    "common",
+    "displaymode",
+    "dmx",
+    "fbmatrix",
+    "fbmplay",
+    "fbmserve",
+    "fbmtest",
+    "fbo",
+    "ffi_backend",
+    "fit_to_leds",
+    "glut",
+    "headless",
+    "kms",
+    "ledlayout",
+    "led_effect",
+    "matrix_buffer",
+    "ndi",
+    "sacn_receiver",
+    "setup_effect",
+    "shader_effect",
+]
+
+[tool.setuptools.packages.find]
+include = ["assembly*", "displays*", "geometry*"]
+exclude = ["tst*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tst"]
+cache_dir = ".pytest_cache_local"

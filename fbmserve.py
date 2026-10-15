@@ -1451,7 +1451,8 @@ def main():
     parser.add_argument('--effects-dir', default='effects', help='Directory containing .frag effects')
     parser.add_argument('--led-effects-dir', default='led_effects', help='Directory containing per-emitter .frag effects')
     parser.add_argument('--setup-shaders-dir', default='setup_shaders', help='Directory containing setup-only emitter shaders')
-    parser.add_argument('--web-dir', default='web', help='Directory containing the web UI')
+    parser.add_argument('--web-dir', default='build/fbmserve/web',
+                        help='Directory containing the built web UI')
     parser.add_argument('--effect', default=None, help='Initial effect id')
     for index, default in enumerate(('0,0,1', '1,1,0', '1,0,0'), start=1):
         parser.add_argument('--color%d' % index, type=parse_color, default=default,
