@@ -11,9 +11,7 @@ def output_mode(displaytype, layout=None):
             raise RuntimeError('WS2811 display requires a layout argument')
         strings = ledlayout.require_led_string_layout(
             layout, MAX_LEDS_PER_STRING, MAX_STRINGS)
-        height = max((len(string) for string in strings), default=0)
-        if height == 0:
-            raise RuntimeError('WS2811 layout must contain at least one LED')
+        height = max(1, max(len(string) for string in strings))
         return 840, height, 27000, 1, 1, 48
     return 4096, 194, 50000, 0, 0, 0
 

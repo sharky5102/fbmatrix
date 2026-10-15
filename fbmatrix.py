@@ -56,7 +56,8 @@ class renderer(object):
         self.interpolate = interpolate
         self.oe = oe
         self.extract = extract
-        self.layout = layout
+        self.layout = (ledlayout.require_led_string_layout(
+            [] if layout is None else layout) if display == 'ws2811' else [])
         self.starttime = time.time()
         self.fps_started = time.monotonic()
         self.fps_frames = 0
@@ -230,8 +231,6 @@ class renderer(object):
             self.source_columns, self.source_rows), file=sys.stderr)
 
         if self.displaytype == 'ws2811':
-            if self.layout is None:
-                raise RuntimeError('WS2811 display requires a layout argument')
             self.ledbuffer = displays.ws2811_ledbuffer.ledbuffer(
                 self.layout, supersample=self.supersample)
             self.ledbuffer.setTexture(self.mainfbo.getTexture())
@@ -260,8 +259,6 @@ class renderer(object):
             self.texquad.setTexture(self.mainfbo.getTexture())
 
         if self.emulate:
-            if self.layout is None:
-                raise RuntimeError('Emulation requires a layout argument')
             self.tree = assembly.tree.tree(
                 displays.ws2811.flatten_layout(self.layout),
                 emitter_shape=(self.ledbuffer.width, self.ledbuffer.height),

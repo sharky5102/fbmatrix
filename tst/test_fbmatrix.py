@@ -218,6 +218,22 @@ class TestWS2811(unittest.TestCase):
     width = 840
     layout = [[[0.0, 0.0, 0.0, 1, 0, 0]] * 500 for _ in range(14)]
 
+    def testEmptyEmulationAcceptsGeneratedLayout(self):
+        matrix = fbmatrix.renderer(
+            backend=test_backend, display='ws2811', emulate=True)
+        matrix.reshape(1024, 512)
+        matrix.render = lambda: None
+        matrix.display()
+        self.assertEqual(0, matrix.ledbuffer.total_leds)
+        self.assertEqual(0, matrix.tree.tree.vertices)
+        with matrix.ledfbo:
+            pixel = gl.glReadPixels(0, 0, 1, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE)
+        self.assertEqual(b'\x00\x00\x00', bytes(pixel)[:3])
+        matrix.set_layout([[[0, 0, 0, 1, 0, 0]]], 1, 1,
+                          led_effect.DEFAULT_LED_EFFECT, 'default')
+        matrix.display()
+        self.assertEqual(1, matrix.ledbuffer.total_leds)
+
     def readFrameData(self, color, layout=None):
         self.renderer = fbmatrix.renderer(
             display='ws2811', layout=layout or self.layout,

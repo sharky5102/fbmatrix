@@ -3,9 +3,6 @@ import statistics
 
 
 def require_led_layout(layout):
-    if not layout:
-        raise RuntimeError('Layout must contain at least one LED')
-
     normalized = []
 
     for i, lamp in enumerate(layout):
@@ -24,8 +21,9 @@ def require_led_layout(layout):
 
 
 def require_led_string_layout(layout, max_string_length=2000, max_strings=14):
-    if not layout:
-        raise RuntimeError('Layout must contain at least one string')
+    # One empty string represents an unconfigured display.
+    if layout == []:
+        return [[]]
     if len(layout) > max_strings:
         raise RuntimeError(
             'Layout contains %d strings; at most %d are supported' %
@@ -51,12 +49,14 @@ def flatten_string_layout(layout):
 
 def active_xy_bounds(layout):
     """Return physical XY bounds for LEDs which can display source content."""
-    if (layout and not isinstance(layout[0][0], (list, tuple))):
+    if layout and layout[0] and not isinstance(layout[0][0], (list, tuple)):
         lamps = require_led_layout(layout)
     else:
         lamps = flatten_string_layout(require_led_string_layout(layout))
     active = [lamp for lamp in lamps if lamp[3] > 0.0]
     points = active or lamps
+    if not points:
+        return (0.0, 0.0, 0.0, 0.0)
     return (
         min(lamp[0] for lamp in points),
         max(lamp[0] for lamp in points),

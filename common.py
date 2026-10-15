@@ -24,8 +24,8 @@ def add_args(parser):
     hub75.add_argument('--extract', default='bcm', help='HUB75 bitplane extraction mode')
 
     ws2811 = parser.add_argument_group('WS2811 options')
-    ws2811.add_argument('--layout', default='layout.json',
-                        help='Initial WS2811 layout used before one is saved in fbmserve state')
+    ws2811.add_argument('--layout', default=None,
+                        help='Optional initial WS2811 layout; normally configured through Setup')
 
 
 def load_layout(filename):
@@ -42,11 +42,13 @@ def load_layout(filename):
 
 
 def renderer_from_args(args, layout_override=None):
-    layout = layout_override
     display = 'ws2811' if args.emulate else args.display
-
-    if display == 'ws2811' and layout is None:
-        layout = load_layout(args.layout)
+    layout = []
+    if display == 'ws2811':
+        layout = layout_override
+        if layout is None:
+            layout = load_layout(args.layout) if args.layout else []
+        layout = ledlayout.require_led_string_layout(layout)
 
     if args.source_scale <= 0:
         raise RuntimeError('--source-scale must be greater than zero')
@@ -60,8 +62,7 @@ def renderer_from_args(args, layout_override=None):
             '--source-columns and --source-rows are not supported for ws2811; '
             'use --source-scale')
 
-    if (layout is not None and args.source_columns is None and
-            args.source_rows is None):
+    if display == 'ws2811':
         source_columns, source_rows = layout_source_size(
             layout, args.source_scale)
     else:

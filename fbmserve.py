@@ -119,7 +119,7 @@ class AppState:
     led_effect: str
     supersample: float
     fit_mode: str
-    layout: list | None = dataclasses.field(metadata={'snapshot': False})
+    layout: list = dataclasses.field(metadata={'snapshot': False})
     ndi_status: dict = dataclasses.field(metadata={'persist': False})
     error: str | None = dataclasses.field(metadata={'persist': False})
     state_file: object = dataclasses.field(
@@ -212,8 +212,8 @@ class AppState:
         if fit_mode not in ('fill', 'fit', 'stretch'):
             raise ValueError('Unknown LED fit mode')
         self.fit_mode = fit_mode
-        self.layout = (None if layout is None else
-                       ledlayout.require_led_string_layout(layout))
+        self.layout = ledlayout.require_led_string_layout(
+            [] if layout is None else layout)
         self.error = None
         self.state_file = state_file
         if self.state_file is not None:
@@ -243,8 +243,8 @@ class AppState:
     def update(self, **values):
         if 'layout' in values:
             layout = values['layout']
-            values['layout'] = (None if layout is None else
-                                ledlayout.require_led_string_layout(layout))
+            values['layout'] = ledlayout.require_led_string_layout(
+                [] if layout is None else layout)
         with self.lock:
             persist = self.state_file is not None and any(
                 key in self.persisted_keys() and getattr(self, key) != value
@@ -1377,8 +1377,8 @@ def load_state_file(filename, effect_ids, led_effect_ids):
             raise ValueError('unknown input mode')
         if values['fit_mode'] not in ('fill', 'fit', 'stretch'):
             raise ValueError('unknown LED fit mode')
-        if values['layout'] is not None:
-            values['layout'] = ledlayout.require_led_string_layout(values['layout'])
+        values['layout'] = ledlayout.require_led_string_layout(
+            [] if values['layout'] is None else values['layout'])
         if values['ndi_source'] is not None and not isinstance(values['ndi_source'], str):
             raise ValueError('invalid NDI source')
         if not isinstance(values['autoplay_effects'], list) or any(
@@ -1404,22 +1404,6 @@ def load_state_file(filename, effect_ids, led_effect_ids):
         return None
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as e:
         print('Ignoring invalid state file %s: %s' % (filename, e),
-              file=sys.stderr)
-        return None
-
-
-def load_saved_layout(filename):
-    """Read the application-owned layout before creating the renderer."""
-    try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            values = json.load(f)
-        if not isinstance(values, dict) or values.get('layout') is None:
-            return None
-        return ledlayout.require_led_string_layout(values['layout'])
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError, TypeError, RuntimeError, json.JSONDecodeError) as e:
-        print('Ignoring invalid saved layout in %s: %s' % (filename, e),
               file=sys.stderr)
         return None
 
@@ -1498,13 +1482,6 @@ def main():
     setup_shaders_dir = os.path.abspath(args.setup_shaders_dir)
     web_dir = os.path.abspath(args.web_dir)
     display = 'ws2811' if args.emulate else args.display
-    saved_layout = load_saved_layout(args.state_file)
-    layout = saved_layout
-    if display == 'ws2811' and layout is None:
-        layout = common.load_layout(args.layout)
-    matrix_layout = layout if display == 'ws2811' else None
-    matrix = common.renderer_from_args(args, layout_override=matrix_layout)
-    matrix.source_scale = args.source_scale
     effects = get_shader_effect().discover_effects(effects_dir)
     if not effects:
         raise RuntimeError('No effects found in %s' % effects_dir)
@@ -1527,7 +1504,7 @@ def main():
         'led_effect': 'default',
         'supersample': clamp(args.supersample, 0.0, 16.0),
         'fit_mode': 'fill',
-        'layout': layout,
+        'layout': [],
     }
     if args.state_file is not None:
         saved = load_state_file(
@@ -1539,9 +1516,13 @@ def main():
             initial_state.update(saved)
     if initial_state['input_mode'] == 'setup':
         initial_state['led_effect'] = 'layout_colors'
-    if initial_state['layout'] is None and display == 'ws2811':
+    if (display == 'ws2811' and args.layout is not None and
+            not any(initial_state['layout'] or [])):
         initial_state['layout'] = common.load_layout(args.layout)
     state = AppState(**initial_state, state_file=args.state_file)
+    matrix = common.renderer_from_args(
+        args, layout_override=state.layout_snapshot())
+    matrix.source_scale = args.source_scale
     commands = queue.Queue()
     dmx_receiver = (DMXReceiver(args.dmx_device)
                     if args.dmx_start is not None and DMXReceiver is not None else None)

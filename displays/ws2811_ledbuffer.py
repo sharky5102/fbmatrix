@@ -73,7 +73,7 @@ class ledbuffer(geometry.base):
 
     def __init__(self, layout, supersample, effect_source=None):
         self.strings = ledlayout.require_led_string_layout(layout)
-        self.width = max(len(string) for string in self.strings)
+        self.width = max(1, max(len(string) for string in self.strings))
         self.height = len(self.strings)
         self.supersample = supersample
         self.tex = 0

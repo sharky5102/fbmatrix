@@ -295,8 +295,10 @@ User-controlled settings and the active LED layout are stored in
 /path/to/fbmserve-state.json` to choose another location. State is replaced
 atomically and synced to durable storage after changes; an unreadable or
 obsolete state file is ignored and replaced with the command-line defaults.
-For WS2811 output, `--layout` supplies the initial layout until the application
-has saved one in its state file. A layout received through Setup is stored in
+WS2811 starts with blank output until a layout is configured through Setup;
+no `layout.json` file is required. Use `--layout` to explicitly import an initial
+layout. HUB75 uses its matrix dimensions and ignores LED layouts.
+A layout received through Setup is stored in
 that file; restart `fbmserve.py` to apply its new geometry to the LEDs. A saved
 NDI source does not need to be visible during startup: the receiver keeps
 trying that source so it can connect when the source comes online.

@@ -164,10 +164,8 @@ class signalgenerator(_quad):
         self.strings = ledlayout.require_led_string_layout(
             layout, MAX_LEDS_PER_STRING, MAX_STRINGS)
         self.lamps = ledlayout.flatten_string_layout(self.strings)
-        self.string_length = max((len(string) for string in self.strings),
-                                 default=0)
-        if self.string_length == 0:
-            raise RuntimeError('WS2811 layout must contain at least one LED')
+        # GPU resources must remain nonzero before Setup supplies any LEDs.
+        self.string_length = max(1, max(len(string) for string in self.strings))
 
         self.bitplane = fbo.FBO(BITS_PER_LED, self.string_length,
                                 mag_filter=gl.GL_NEAREST,
