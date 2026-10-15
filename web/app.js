@@ -85,7 +85,15 @@ const networkControlHoldEl = document.getElementById('network-control-hold');
 const networkControlStatusEl = document.getElementById('network-control-status');
 const networkControlErrorEl = document.getElementById('network-control-error');
 const layoutPreviewEl = document.getElementById('layout-preview');
+const layoutStatsEl = document.getElementById('layout-stats');
 const captureModalEl = document.getElementById('capture-modal');
+const generateLayoutModalEl = document.getElementById('generate-layout-modal');
+const generateLayoutTypeEl = document.getElementById('generate-layout-type');
+const generateRectangleFieldsEl = document.getElementById('generate-rectangle-fields');
+const generateRadialFieldsEl = document.getElementById('generate-radial-fields');
+const generateCenterSpacingFieldEl = document.getElementById('generate-center-spacing-field');
+const generateLayoutSubmitEl = document.getElementById('generate-layout-submit');
+const generateLayoutErrorEl = document.getElementById('generate-layout-error');
 const captureOpenEl = document.getElementById('capture-open');
 const captureCloseEl = document.getElementById('capture-close');
 const captureCountStepEl = document.getElementById('capture-count-step');
@@ -96,6 +104,7 @@ const captureQrImageEl = document.getElementById('capture-qr-image');
 const captureStatusEl = document.getElementById('capture-status');
 const captureLayoutFileEl = document.getElementById('capture-layout-file');
 let layoutPoints = [];
+let layoutStats = null;
 let captureSession = null;
 let capturePollTimer = null;
 
@@ -132,6 +141,7 @@ function setCaptureStatus(message, isError = false) {
 
 async function switchMode(mode) {
   if (mode !== 'setup' && captureModalEl.open) await closeCaptureWorkflow();
+  if (mode !== 'setup' && generateLayoutModalEl.open) generateLayoutModalEl.close();
   await updateState(mode === 'setup'
     ? { input_mode: mode, led_effect: 'layout_colors' }
     : { input_mode: mode });
@@ -151,9 +161,11 @@ async function init() {
     state.led_effects = await request('/api/led-effects');
     const layout = await request('/api/layout');
     layoutPoints = layout.points;
+    layoutStats = layout.stats;
     Object.assign(state, await request('/api/state'));
     await refreshNdiSources();
     renderControls();
+    renderLayoutStats();
     drawLayoutPreview();
     new ResizeObserver(drawLayoutPreview).observe(layoutPreviewEl);
     await loadPreviewEffect(state.effect);
@@ -228,6 +240,31 @@ function drawLayoutPreview() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+function renderLayoutStats() {
+  layoutStatsEl.replaceChildren();
+  if (!layoutStats || layoutStats.total === 0) {
+    const empty = document.createElement('dt');
+    empty.className = 'layout-stats-empty';
+    empty.textContent = 'No layout';
+    layoutStatsEl.appendChild(empty);
+    return;
+  }
+  const entries = [
+    ['Total LEDs', layoutStats.total],
+    ['Active', layoutStats.active],
+    ['Connector LEDs', layoutStats.connectors],
+    ['Inactive padding', layoutStats.padding],
+    ['Output strings', layoutStats.strings],
+  ];
+  entries.forEach(([label, value]) => {
+    const term = document.createElement('dt');
+    term.textContent = label;
+    const detail = document.createElement('dd');
+    detail.textContent = value.toLocaleString();
+    layoutStatsEl.append(term, detail);
+  });
+}
+
 function openCaptureWorkflow() {
   captureCountStepEl.hidden = false;
   captureQrStepEl.hidden = true;
@@ -240,6 +277,87 @@ function openCaptureWorkflow() {
   captureSession = null;
   captureModalEl.showModal();
   capturePixelCountEl.focus();
+}
+
+function updateGenerateLayoutFields() {
+  const type = generateLayoutTypeEl.value;
+  const rectangle = type === 'rectangle';
+  generateRectangleFieldsEl.hidden = !rectangle;
+  generateRadialFieldsEl.hidden = rectangle;
+  generateCenterSpacingFieldEl.hidden = type !== 'dual-radial';
+  document.getElementById('generate-center-spacing').required = type === 'dual-radial';
+  generateLayoutErrorEl.hidden = true;
+  generateLayoutErrorEl.textContent = '';
+}
+
+function openGenerateLayoutDialog() {
+  updateGenerateLayoutFields();
+  generateLayoutModalEl.showModal();
+  generateLayoutTypeEl.focus();
+}
+
+function generateLayoutOptions() {
+  const number = (id) => Number(document.getElementById(id).value);
+  const optionalNumber = (id) => {
+    const value = document.getElementById(id).value;
+    return value === '' ? null : Number(value);
+  };
+  const type = generateLayoutTypeEl.value;
+  const stringLeds = optionalNumber(type === 'rectangle'
+    ? 'generate-rectangle-string-leds' : 'generate-radial-string-leds');
+  if (type === 'rectangle') {
+    return {
+      type,
+      columns: number('generate-columns'),
+      rows: number('generate-rows'),
+      stringLeds,
+    };
+  }
+  return {
+    type,
+    width: number('generate-width'),
+    height: number('generate-height'),
+    ledDistance: number('generate-led-distance'),
+    hubRadius: number('generate-hub-radius'),
+    spokes: number('generate-spokes'),
+    centerSpacing: type === 'dual-radial' ? number('generate-center-spacing') : 0,
+    sectionLeds: number('generate-section-leds'),
+    stringLeds,
+    maxSpokeLength: optionalNumber('generate-max-spoke-length'),
+  };
+}
+
+async function uploadGeneratedLayout() {
+  const fields = generateLayoutTypeEl.value === 'rectangle'
+    ? generateRectangleFieldsEl : generateRadialFieldsEl;
+  const invalid = [...fields.querySelectorAll('input')]
+    .find((input) => !input.closest('label').hidden && !input.checkValidity());
+  if (invalid) {
+    invalid.reportValidity();
+    return;
+  }
+  generateLayoutSubmitEl.disabled = true;
+  generateLayoutErrorEl.hidden = true;
+  try {
+    const layout = window.LayoutGenerator.generateLayout(generateLayoutOptions());
+    await request('/api/layout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(layout),
+    });
+    const result = await request('/api/layout');
+    layoutPoints = result.points;
+    layoutStats = result.stats;
+    renderLayoutStats();
+    drawLayoutPreview();
+    await updateState({ led_effect: 'layout_colors' });
+    generateLayoutModalEl.close();
+  } catch (error) {
+    generateLayoutErrorEl.textContent = error.message;
+    generateLayoutErrorEl.hidden = false;
+  } finally {
+    generateLayoutSubmitEl.disabled = false;
+  }
 }
 
 async function startCaptureWorkflow() {
@@ -296,6 +414,8 @@ async function finishCaptureUpload(message = 'Layout uploaded and saved. Restart
   captureLayoutFileEl.disabled = true;
   const result = await request('/api/layout');
   layoutPoints = result.points;
+  layoutStats = result.stats;
+  renderLayoutStats();
   drawLayoutPreview();
   await updateState({ led_effect: 'layout_colors' });
   await closeCaptureWorkflow();
@@ -887,6 +1007,13 @@ captureModalEl.addEventListener('cancel', (event) => {
 });
 captureModalEl.addEventListener('click', (event) => {
   if (event.target === captureModalEl) closeCaptureWorkflow();
+});
+document.getElementById('generate-layout-open').addEventListener('click', openGenerateLayoutDialog);
+document.getElementById('generate-layout-close').addEventListener('click', () => generateLayoutModalEl.close());
+document.getElementById('generate-layout-submit').addEventListener('click', uploadGeneratedLayout);
+generateLayoutTypeEl.addEventListener('change', updateGenerateLayoutFields);
+generateLayoutModalEl.addEventListener('click', (event) => {
+  if (event.target === generateLayoutModalEl) generateLayoutModalEl.close();
 });
 ndiSourceEl.addEventListener('change', () => {
   if (ndiSourceEl.value) updateState({ ndi_source: ndiSourceEl.value, input_mode: 'ndi' });

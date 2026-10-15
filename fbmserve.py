@@ -641,6 +641,30 @@ class InputRenderer:
                 if ('led_effect' in command['values'] and
                         command['values']['led_effect'] != self.failed_led_effect):
                     self.failed_led_effect = None
+            elif command['type'] == 'set_layout':
+                if not self.matrix or not getattr(self.matrix, 'emulate', False):
+                    continue
+                try:
+                    self.state.update(led_effect='layout_colors')
+                    layout = ledlayout.require_led_string_layout(command['layout'])
+                    snapshot = self.state.snapshot()
+                    source_columns, source_rows = common.layout_source_size(
+                        layout, getattr(self.matrix, 'source_scale', 1.0))
+                    source = setup_effect.load_effect_source(
+                        self.setup_shaders_dir, snapshot['led_effect'])
+                    self.matrix.set_layout(
+                        layout, source_columns, source_rows, source,
+                        snapshot['led_effect'])
+                    self.width = source_columns
+                    self.height = source_rows
+                    self.current_led_effect = snapshot['led_effect']
+                    self.failed_led_effect = None
+                    if self.quad is not None:
+                        self.quad.width = source_columns
+                        self.quad.height = source_rows
+                    self.state.update(error=None)
+                except (OSError, RuntimeError, TypeError, ValueError) as e:
+                    self.state.update(error=str(e))
 
     def apply_autoplay(self):
         snapshot = self.state.snapshot()
@@ -709,16 +733,30 @@ class RequestHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/layout':
             layout = self.server.app_state.layout_snapshot()
             if layout:
-                lamps = ledlayout.flatten_string_layout(
-                    ledlayout.require_led_string_layout(layout))
+                strings = ledlayout.require_led_string_layout(layout)
+                lamps = ledlayout.flatten_string_layout(strings)
                 points = [
                     {'x': lamp[0], 'y': lamp[1],
                      'enabled': lamp[3] > 0}
                     for lamp in lamps
                 ]
+                active = sum(1 for lamp in lamps if lamp[3] > 0)
+                inactive = len(lamps) - active
+                padding = sum(
+                    1 for lamp in lamps
+                    if lamp[3] <= 0 and lamp[:3] == (0.0, 0.0, 0.0))
+                stats = {
+                    'total': len(lamps),
+                    'active': active,
+                    'inactive': inactive,
+                    'connectors': inactive - padding,
+                    'padding': padding,
+                    'strings': len(strings),
+                }
             else:
                 points = []
-            self.write_json({'points': points})
+                stats = None
+            self.write_json({'points': points, 'stats': stats})
             return
 
         if parsed.path.startswith('/api/capture-sessions/'):
@@ -764,6 +802,9 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == '/api/layout':
+            self.receive_layout_upload()
+            return
         if parsed.path == '/api/capture-sessions':
             self.create_capture_session()
             return
@@ -934,7 +975,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         not session['active'] or
                         self.server.app_state.snapshot()['input_mode'] != 'setup'):
                     raise ValueError('Upload URL unavailable')
-            self.server.app_state.update(layout=layout)
+            restart_required = self.store_uploaded_layout(layout)
         except (ValueError, TypeError, RuntimeError, OSError) as e:
             with self.server.capture_lock:
                 session['uploading'] = False
@@ -946,14 +987,44 @@ class RequestHandler(BaseHTTPRequestHandler):
             session['uploaded'] = True
         self.write_json({
             'success': True,
-            'restart_required': True,
-            'message': 'Layout saved. Restart fbmserve to apply it.',
+            'restart_required': restart_required,
+            'message': ('Layout saved. Restart fbmserve to apply it.'
+                        if restart_required else 'Layout updated in emulation.'),
         })
 
     def deactivate_capture_sessions(self):
         with self.server.capture_lock:
             for session in self.server.capture_sessions.values():
                 session['active'] = False
+
+    def receive_layout_upload(self):
+        if self.server.app_state.snapshot()['input_mode'] != 'setup':
+            self.write_json({'error': 'Layouts can only be changed in Setup'}, status=409)
+            return
+        try:
+            layout = ledlayout.require_led_string_layout(self.read_json_body())
+            restart_required = self.store_uploaded_layout(layout)
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
+            self.write_json({'error': str(e)}, status=400)
+            return
+        self.write_json({
+            'success': True,
+            'restart_required': restart_required,
+            'message': ('Layout saved. Restart fbmserve to apply it.'
+                        if restart_required else 'Layout updated in emulation.'),
+        })
+
+    def store_uploaded_layout(self, layout):
+        snapshot = self.server.app_state.snapshot()
+        values = {'layout': layout}
+        if (snapshot['input_mode'] == 'setup' and
+                snapshot['led_effect'] == 'calibration'):
+            values['led_effect'] = 'layout_colors'
+        self.server.app_state.update(**values)
+        emulating = bool(getattr(self.server.matrix, 'emulate', False))
+        if emulating:
+            self.server.commands.put({'type': 'set_layout', 'layout': layout})
+        return not emulating
 
     def normalize_state(self, payload):
         if not isinstance(payload, dict):
@@ -1402,6 +1473,7 @@ def main():
         layout = common.load_layout(args.layout)
     matrix_layout = layout if display == 'ws2811' else None
     matrix = common.renderer_from_args(args, layout_override=matrix_layout)
+    matrix.source_scale = args.source_scale
     effects = get_shader_effect().discover_effects(effects_dir)
     if not effects:
         raise RuntimeError('No effects found in %s' % effects_dir)

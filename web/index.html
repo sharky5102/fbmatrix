@@ -112,7 +112,11 @@
         <h2>Layout</h2>
         <div class="layout-preview-row">
           <canvas id="layout-preview" class="layout-preview" aria-label="Current LED layout preview"></canvas>
-          <button id="capture-open" type="button">Capture LED positions</button>
+          <dl id="layout-stats" class="layout-stats" aria-label="LED layout statistics"></dl>
+          <div class="layout-actions">
+            <button id="generate-layout-open" type="button">Generate layout</button>
+            <button id="capture-open" type="button">Capture LED positions</button>
+          </div>
         </div>
         <label>
           <span>Fit to LEDs</span>
@@ -190,6 +194,40 @@
     </div>
   </dialog>
 
+  <dialog class="capture-modal layout-modal" id="generate-layout-modal" aria-labelledby="generate-layout-title">
+    <div class="capture-modal-header">
+      <h2 id="generate-layout-title">Generate layout</h2>
+      <button id="generate-layout-close" class="capture-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <label>
+      <span>Layout type</span>
+      <select id="generate-layout-type">
+        <option value="rectangle">Rectangle</option>
+        <option value="radial">Radial</option>
+        <option value="dual-radial">Dual radial</option>
+      </select>
+    </label>
+    <div id="generate-rectangle-fields" class="generator-fields">
+      <label><span>Columns</span><input id="generate-columns" type="number" min="1" step="1" value="25" required></label>
+      <label><span>Rows</span><input id="generate-rows" type="number" min="1" step="1" value="20" required></label>
+      <label><span>LEDs per string</span><input id="generate-rectangle-string-leds" type="number" min="1" max="2000" step="1" placeholder="500"></label>
+    </div>
+    <div id="generate-radial-fields" class="generator-fields" hidden>
+      <label><span>Width (meters)</span><input id="generate-width" type="number" min="0.001" step="any" value="6" required></label>
+      <label><span>Height (meters)</span><input id="generate-height" type="number" min="0.001" step="any" value="7" required></label>
+      <label><span>LED spacing (meters)</span><input id="generate-led-distance" type="number" min="0.001" step="any" value="0.1" required></label>
+      <label><span>Hub radius (meters)</span><input id="generate-hub-radius" type="number" min="0" step="any" value="0.2" required></label>
+      <label><span>Spokes</span><input id="generate-spokes" type="number" min="4" max="512" step="1" value="32" required></label>
+      <label id="generate-center-spacing-field" hidden><span>Center spacing (meters)</span><input id="generate-center-spacing" type="number" min="0" step="any" value="1.6"></label>
+      <label><span>Section LEDs</span><input id="generate-section-leds" type="number" min="1" max="500" step="1" value="250" required></label>
+      <label><span>LEDs per string</span><input id="generate-radial-string-leds" type="number" min="1" max="2000" step="1" placeholder="Auto (up to 500)"></label>
+      <label><span>Maximum spoke length (meters, optional)</span><input id="generate-max-spoke-length" type="number" min="0.001" step="any" placeholder="No limit"></label>
+    </div>
+    <p id="generate-layout-error" class="input-error" role="alert" hidden></p>
+    <div class="capture-actions"><button id="generate-layout-submit" type="button">OK</button></div>
+  </dialog>
+
+  <script src="/layout-generator.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

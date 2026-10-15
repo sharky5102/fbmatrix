@@ -105,14 +105,8 @@ These instructions assume a 1/16 scan RGB matrix.
 1. With the Pi powered off, connect the WS2811 strings. See
    [Using WS281x output](#using-ws281x-output) for wiring information.
 2. Boot the Pi, connect over SSH, and activate the virtual environment.
-3. Generate a layout describing the LED positions. For example:
-
-   ```bash
-   cd fbmatrix
-   source .venv/bin/activate
-   ./generate-layout --rows 20 --columns 100 > layout.json
-   ```
-
+3. Open the **Setup** tab in the web interface and use **Capture LED positions**
+   or **Generate layout** to create and upload the LED layout.
 4. Play a video using the WS2811 output:
 
    ```bash
@@ -167,12 +161,10 @@ strings are supported.
 An empty inner array leaves that output pin unused while retaining later string
 numbers.
 
-`generate-layout.py` groups generated LEDs into strings of 500 LEDs by default.
-For radial layouts, a string contains only whole fixed sections, so
-`--string-leds` must be a multiple of `--section-leds`. When it is omitted, the
-generator uses the largest whole-section string up to the default 500 LEDs.
-For example, `--section-leds 200 --string-leds 200` assigns one section to each
-string and produces an active output resolution of 840x200.
+Use the **Setup** tab in the web interface to capture or generate a layout and
+upload it to FBMatrix. The layout generator supports rectangular, radial and
+dual radial arrangements; its preview and statistics update as you change the
+options.
 
 The current WS281x universe-to-pin mapping is:
 
@@ -237,23 +229,14 @@ the renderer explicitly:
     matrix = fbmatrix.renderer(
         backend=backend, display='ws2811', layout=layout)
 
-If you have a perfect matrix (for example, you have a ws281x matrix on a
-PCB), then you can use the generate-layout.py script to generate a
-layout.json file:
-
-    ./generate-layout.py square --columns 64 --rows 16 > layout.json
-
 Generated layouts assign a logical line number and normalized position within
 that line. `fbmtest layout-colors` cycles colors by logical line, which makes
 rows, spokes and runs easy to distinguish while hanging or debugging LEDs.
 The same **Layout Colors** emitter effect is available in `fbmserve`.
 
-`generate-layout.py` can also generate a radial serpentine layout for physical
-rectangles. Radial layouts divide the string into 8 fixed sections: two
-balanced even spoke groups for each of the top-left, top-right, bottom-right
-and bottom-left quarters. Each section is padded to `--section-leds` LEDs,
-defaulting to 250. Padding LEDs and connector LEDs between spokes are written
-with `enabled` set to `0.0`, so they remain inactive during playback.
+Radial layouts divide the string into 8 fixed sections: two balanced even
+spoke groups for each of the top-left, top-right, bottom-right and bottom-left
+quarters. Padding LEDs and connector LEDs between spokes are marked inactive.
 
 Physical radial layouts are normalized into the square `[-1, 1]` coordinate
 space without changing aspect ratio. The larger physical dimension reaches the
@@ -261,28 +244,9 @@ square bounds; the smaller dimension is inset. For a 6 by 7 meter rectangle,
 the y coordinates reach `-1` and `1`, while x coordinates are constrained to
 about `-0.857` and `0.857`.
 
-For example, this generates a 6 by 7 meter radial layout with 10cm LED spacing,
-a 20cm central hub and 32 spokes:
-
-    ./generate-layout.py radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 32 > layout.json
-
-The spoke count must be divisible by 8, so each quarter has an even number of
-spokes. The generator splits each quarter into two even sections, such as 6/8
-for a 14-spoke quarter, so every section starts and ends at the hub. The
-generator calculates whether every section can fit in `--section-leds`; if not,
-it exits with the section that needs more LEDs.
-
-For radial and dual radial layouts, the generator also prints perimeter
-crossings to stderr for harness construction. Crossings are physical distances
-in meters along each edge: top and bottom are measured from the left edge, and
-left and right are measured from the bottom edge.
-
-For installations with two radial centers, `generate-layout.py` also supports
-`dual-radial`. This layout assumes a portrait rectangle with two hubs on the
-horizontal center line, separated by `--center-spacing`. The left and right
-regions are semicircular fans with fixed angular spacing. The middle region is
-filled by parallel vertical runs from the center line to the top and bottom
-edges, using spacing derived from the adjacent radial edge spacing.
+For installations with two radial centers, dual radial layouts use two hubs
+on the horizontal center line. The left and right regions are semicircular
+fans, with parallel vertical runs filling the middle region.
 
 Dual radial layouts are split into four symmetric physical parts: top-left,
 top-right, bottom-right and bottom-left. Each part contains two fixed LED
@@ -291,23 +255,6 @@ to `--section-leds` LEDs, defaulting to 250. A section may continue from side
 fan runs into parallel center runs, and every section starts and ends either at
 a hub or on the center line. Connector and padding LEDs have `enabled` set to
 `0.0`.
-
-For example, this generates a 4 by 5 meter dual radial layout with two hubs
-1.6 meters apart:
-
-    ./generate-layout.py dual-radial --width 4 --height 5 --led-distance 0.1 --hub-radius 0.2 --spokes 32 --center-spacing 1.6 > layout.json
-
-The dual radial spoke count is the total number of radial spokes across both
-semicircular regions and must be divisible by 4. When `--center-spacing 0` is
-used, `dual-radial` collapses to the normal `radial` generator and uses its
-divisible-by-8 spoke requirement.
-
-Use `--max-spoke-length` to cap LED-bearing run length in meters. This clips
-long spokes before placing LEDs, which is useful for trimming rectangle corners
-when a section would otherwise exceed `--section-leds`. For example, this keeps
-the longest runs in the 6 by 7 meter dual radial layout below 2.8 meters:
-
-    ./generate-layout.py dual-radial --width 6 --height 7 --led-distance 0.1 --hub-radius 0.2 --spokes 52 --center-spacing 1.5 --max-spoke-length 2.8 > layout.json
 
 To play a video, use the same procedure as for HUB75 to play a video, except
 add the --display parameter:
