@@ -2,6 +2,7 @@ PyOpenGL
 numpy
 pyrr
 pytest
+setuptools>=68
 cffi
 ffpyplayer
 sacn>=1.11,<2

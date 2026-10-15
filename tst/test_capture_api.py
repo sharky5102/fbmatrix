@@ -98,8 +98,8 @@ def test_capture_upload_saves_layout_once_and_closes_session(capture_api):
          (1.0, 0.0, 0.0, 1.0, 0.0, 1.0)]]
     assert fbmserve.load_state_file(
         state.state_file, {'solid'}, {'default'})['layout'] == [
-            [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-             [1.0, 0.0, 0.0, 1.0, 0.0, 1.0]]]
+            [(0.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+             (1.0, 0.0, 0.0, 1.0, 0.0, 1.0)]]
 
     status, body, _ = request('GET', '/api/capture-sessions/%s' % session['token'])
     assert status == 404

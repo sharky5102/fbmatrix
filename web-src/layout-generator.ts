@@ -308,13 +308,16 @@
     const rightHub = [centerSpacing / 2, 0];
     const sideSpokes = spokes / 2;
     const spacing = Math.PI / sideSpokes;
-    const spokeSets = {
+    const spokeSets: Record<string, any[]> = {
       'left-top': [], 'left-bottom': [], 'right-top': [], 'right-bottom': [],
     };
     for (let index = 0; index < sideSpokes; index += 1) {
       const leftAngle = Math.PI / 2 + spacing / 2 + index * spacing;
       const rightAngle = -Math.PI / 2 + spacing / 2 + index * spacing;
-      [['left', leftHub, leftAngle], ['right', rightHub, rightAngle]].forEach(([side, hub, angle]) => {
+      const spokeOrigins: [string, number[], number][] = [
+        ['left', leftHub, leftAngle], ['right', rightHub, rightAngle],
+      ];
+      spokeOrigins.forEach(([side, hub, angle]) => {
         const [edgeDistance, edgeX, edgeY] = rayRectangleIntersectionFrom(
           hub[0], hub[1], angle, width, height);
         if (edgeDistance <= hubRadius) throw new Error(`Hub radius reaches beyond ${side} spoke ${index}`);
@@ -354,7 +357,7 @@
         end: clippedEndpoint([x, 0], [x, y], maxCenterLength),
       };
     };
-    const partSpecs = [
+    const partSpecs: [string, any[]][] = [
       ['top-left', spokeSets['left-top'].slice().reverse().concat(leftXs.map((x) => centerRun(x, height / 2)))],
       ['top-right', rightXs.map((x) => centerRun(x, height / 2)).concat(spokeSets['right-top'].slice().reverse())],
       ['bottom-right', spokeSets['right-bottom'].slice().reverse().concat(rightXs.slice().reverse().map((x) => centerRun(x, -height / 2)))],

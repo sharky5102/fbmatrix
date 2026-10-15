@@ -82,7 +82,11 @@ def test_app_state_round_trips_every_persisted_field(tmp_path):
 
     assert json.loads(second_filename.read_text()) == json.loads(
         first_filename.read_text())
-    assert {key: second.snapshot()[key] for key in second.persisted_keys()} == saved
+    snapshot = second.snapshot()
+    snapshot_persisted_keys = set(second.persisted_keys()) & set(snapshot)
+    assert {key: snapshot[key] for key in snapshot_persisted_keys} == {
+        key: saved[key] for key in snapshot_persisted_keys}
+    assert second.layout_snapshot() == saved['layout']
     assert second.snapshot()['error'] is None
     assert second.snapshot()['ndi_status'] == {}
 

@@ -241,6 +241,10 @@ class AppState:
         return copy.deepcopy(value)
 
     def update(self, **values):
+        if 'layout' in values:
+            layout = values['layout']
+            values['layout'] = (None if layout is None else
+                                ledlayout.require_led_string_layout(layout))
         with self.lock:
             persist = self.state_file is not None and any(
                 key in self.persisted_keys() and getattr(self, key) != value
@@ -916,7 +920,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 session['last_seen'] = time.monotonic()
             if session and self.server.app_state.snapshot()['input_mode'] != 'setup':
                 session['active'] = False
-            if session is None:
+            if session is None or not session['active']:
                 self.write_json({'error': 'Capture session unavailable'}, status=404)
                 return
             active = session['active']

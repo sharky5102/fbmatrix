@@ -1,0 +1,10 @@
+{
+  "name": "fbmatrix",
+  "private": true,
+  "scripts": {
+    "build": "node --max-old-space-size=2048 ./node_modules/typescript/bin/tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

@@ -263,10 +263,27 @@ add the --display parameter:
 
 ### Serving shader effects
 
+The browser UI is written in TypeScript. Install its compiler once from the
+repository root, then use the Python project commands to build, run, and test:
+
+```bash
+npm ci
+python setup.py build
+python setup.py run --args="--emulate --port 8080"
+python setup.py test
+```
+
+`setup.py run` and `setup.py test` build the UI first. The TypeScript compiler
+runs under Node.js and is independent of the active Python virtual environment;
+the Python commands use whichever interpreter invokes `setup.py`. Running
+`fbmserve.py` directly serves the most recently built UI.
+
 `fbmserve.py` runs the normal FBMatrix renderer and starts a small HTTP server
 for selecting GLSL fragment shader effects with a live WebGL2 preview:
 
-    ./fbmserve.py --emulate --port 8080
+    python setup.py run --args="--emulate --port 8080"
+
+The direct `fbmserve.py` command uses the most recently built browser assets.
 
 Add `--autoplay --autoplay-interval 20` to switch randomly between effects
 every 20 seconds. Autoplay is handled server-side, so it continues even when

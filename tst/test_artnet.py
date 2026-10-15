@@ -136,7 +136,10 @@ def test_invalid_configuration(size, start):
 def test_state_migration_and_persistence(tmp_path):
     state = fbmserve.AppState('solid', matrix_size=64,
                               matrix_artnet={'port_address': 100})
-    saved = {key: state.snapshot()[key] for key in state.persisted_keys()}
+    snapshot = state.snapshot()
+    saved = {key: snapshot[key] for key in state.persisted_keys()
+             if key in snapshot}
+    saved['layout'] = state.layout_snapshot()
     path = tmp_path / 'state.json'
     path.write_text(json.dumps(saved))
     assert fbmserve.load_state_file(path, {'solid'}, {'default'}) == saved

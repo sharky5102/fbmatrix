@@ -1,11 +1,17 @@
 """Minimal Linux DMX512 receiver using termios PARMRK break detection."""
 
 import array
-import fcntl
 import os
 import struct
-import termios
+import sys
 import time
+
+try:
+    import fcntl
+    import termios
+except ImportError:  # The decoder is also useful on platforms without termios.
+    fcntl = None
+    termios = None
 
 
 # Linux termios2 definitions. Python's termios module does not expose 250000
@@ -58,6 +64,8 @@ class _ParmrkDecoder:
 
 
 def _configure_dmx(fd):
+    if fcntl is None or termios is None:
+        raise OSError('DMX TTY input requires Linux termios support')
     attrs = termios.tcgetattr(fd)
     attrs[0] = termios.PARMRK | termios.INPCK
     attrs[1] = 0
@@ -88,6 +96,8 @@ class DMXReceiver:
     """
 
     def __init__(self, tty_path):
+        if sys.platform != 'linux' or fcntl is None or termios is None:
+            raise OSError('DMX TTY input is only supported on Linux')
         self._fd = os.open(tty_path, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
         try:
             _configure_dmx(self._fd)

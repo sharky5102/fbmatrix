@@ -1,4 +1,14 @@
-const state = {
+interface Window {
+  LayoutGenerator: {
+    generateLayout(options: any): any;
+  };
+}
+
+function getElementById(id: string): any {
+  return document.getElementById(id);
+}
+
+const state: any = {
   effects: [],
   led_effects: [],
   effect: null,
@@ -34,7 +44,7 @@ const state = {
   network_control_status: {},
 };
 
-const preview = {
+const preview: any = {
   gl: null,
   program: null,
   buffer: null,
@@ -46,69 +56,69 @@ const preview = {
 
 const SLIDER_UPDATE_DELAY = 100;
 
-const effectsEl = document.getElementById('effects');
-const ledEffectsEl = document.getElementById('led-effects');
+const effectsEl = getElementById('effects');
+const ledEffectsEl = getElementById('led-effects');
 const colorKeys = ['color1', 'color2', 'color3'];
-const colorEls = colorKeys.map((key) => document.getElementById(key));
-const speedEl = document.getElementById('speed');
-const brightnessEl = document.getElementById('brightness');
-const supersampleEl = document.getElementById('supersample');
-const fitModeEl = document.getElementById('fit-mode');
-const autoplayEl = document.getElementById('autoplay');
-const autoplayIntervalEl = document.getElementById('autoplay-interval');
-const statusEl = document.getElementById('status');
-const signalEl = document.getElementById('signal');
-const canvas = document.getElementById('swatch');
-const workspaceEl = document.getElementById('workspace');
-const modeEffectEl = document.getElementById('mode-effect');
-const modeNetworkEl = document.getElementById('mode-network');
-const modeSetupEl = document.getElementById('mode-setup');
-const matrixChannelsEl = document.getElementById('matrix-channels');
-const matrixSizeEl = document.getElementById('matrix-size');
-const matrixAddressEl = document.getElementById('matrix-address');
-const matrixProtocolEl = document.getElementById('matrix-protocol');
-const matrixStartEl = document.getElementById('matrix-artnet-universe');
-const matrixSacnStartEl = document.getElementById('matrix-sacn-universe');
-const matrixStatusEl = document.getElementById('matrix-status');
-const matrixErrorEl = document.getElementById('matrix-error');
-const modeNdiEl = document.getElementById('mode-ndi');
-const ndiSourceEl = document.getElementById('ndi-source');
-const ndiPanelEl = document.getElementById('ndi-panel');
-const ndiStatusEl = document.getElementById('ndi-status');
-const ndiErrorEl = document.getElementById('ndi-error');
-const networkControlEnabledEl = document.getElementById('network-control-enabled');
-const networkControlProtocolEl = document.getElementById('network-control-protocol');
-const networkControlArtNetEl = document.getElementById('network-control-artnet-universe');
-const networkControlSacnEl = document.getElementById('network-control-sacn-universe');
-const networkControlAddressEl = document.getElementById('network-control-address');
-const networkControlHoldEl = document.getElementById('network-control-hold');
-const networkControlStatusEl = document.getElementById('network-control-status');
-const networkControlErrorEl = document.getElementById('network-control-error');
-const layoutPreviewEl = document.getElementById('layout-preview');
-const layoutStatsEl = document.getElementById('layout-stats');
-const captureModalEl = document.getElementById('capture-modal');
-const generateLayoutModalEl = document.getElementById('generate-layout-modal');
-const generateLayoutTypeEl = document.getElementById('generate-layout-type');
-const generateRectangleFieldsEl = document.getElementById('generate-rectangle-fields');
-const generateRadialFieldsEl = document.getElementById('generate-radial-fields');
-const generateCenterSpacingFieldEl = document.getElementById('generate-center-spacing-field');
-const generateLayoutSubmitEl = document.getElementById('generate-layout-submit');
-const generateLayoutErrorEl = document.getElementById('generate-layout-error');
-const captureOpenEl = document.getElementById('capture-open');
-const captureCloseEl = document.getElementById('capture-close');
-const captureCountStepEl = document.getElementById('capture-count-step');
-const captureQrStepEl = document.getElementById('capture-qr-step');
-const capturePixelCountEl = document.getElementById('capture-pixel-count');
-const captureNextEl = document.getElementById('capture-next');
-const captureQrImageEl = document.getElementById('capture-qr-image');
-const captureStatusEl = document.getElementById('capture-status');
-const captureLayoutFileEl = document.getElementById('capture-layout-file');
+const colorEls = colorKeys.map((key) => getElementById(key));
+const speedEl = getElementById('speed');
+const brightnessEl = getElementById('brightness');
+const supersampleEl = getElementById('supersample');
+const fitModeEl = getElementById('fit-mode');
+const autoplayEl = getElementById('autoplay');
+const autoplayIntervalEl = getElementById('autoplay-interval');
+const statusEl = getElementById('status');
+const signalEl = getElementById('signal');
+const canvas = getElementById('swatch');
+const workspaceEl = getElementById('workspace');
+const modeEffectEl = getElementById('mode-effect');
+const modeNetworkEl = getElementById('mode-network');
+const modeSetupEl = getElementById('mode-setup');
+const matrixChannelsEl = getElementById('matrix-channels');
+const matrixSizeEl = getElementById('matrix-size');
+const matrixAddressEl = getElementById('matrix-address');
+const matrixProtocolEl = getElementById('matrix-protocol');
+const matrixStartEl = getElementById('matrix-artnet-universe');
+const matrixSacnStartEl = getElementById('matrix-sacn-universe');
+const matrixStatusEl = getElementById('matrix-status');
+const matrixErrorEl = getElementById('matrix-error');
+const modeNdiEl = getElementById('mode-ndi');
+const ndiSourceEl = getElementById('ndi-source');
+const ndiPanelEl = getElementById('ndi-panel');
+const ndiStatusEl = getElementById('ndi-status');
+const ndiErrorEl = getElementById('ndi-error');
+const networkControlEnabledEl = getElementById('network-control-enabled');
+const networkControlProtocolEl = getElementById('network-control-protocol');
+const networkControlArtNetEl = getElementById('network-control-artnet-universe');
+const networkControlSacnEl = getElementById('network-control-sacn-universe');
+const networkControlAddressEl = getElementById('network-control-address');
+const networkControlHoldEl = getElementById('network-control-hold');
+const networkControlStatusEl = getElementById('network-control-status');
+const networkControlErrorEl = getElementById('network-control-error');
+const layoutPreviewEl = getElementById('layout-preview');
+const layoutStatsEl = getElementById('layout-stats');
+const captureModalEl = getElementById('capture-modal');
+const generateLayoutModalEl = getElementById('generate-layout-modal');
+const generateLayoutTypeEl = getElementById('generate-layout-type');
+const generateRectangleFieldsEl = getElementById('generate-rectangle-fields');
+const generateRadialFieldsEl = getElementById('generate-radial-fields');
+const generateCenterSpacingFieldEl = getElementById('generate-center-spacing-field');
+const generateLayoutSubmitEl = getElementById('generate-layout-submit');
+const generateLayoutErrorEl = getElementById('generate-layout-error');
+const captureOpenEl = getElementById('capture-open');
+const captureCloseEl = getElementById('capture-close');
+const captureCountStepEl = getElementById('capture-count-step');
+const captureQrStepEl = getElementById('capture-qr-step');
+const capturePixelCountEl = getElementById('capture-pixel-count');
+const captureNextEl = getElementById('capture-next');
+const captureQrImageEl = getElementById('capture-qr-image');
+const captureStatusEl = getElementById('capture-status');
+const captureLayoutFileEl = getElementById('capture-layout-file');
 let layoutPoints = [];
 let layoutStats = null;
 let captureSession = null;
 let capturePollTimer = null;
 
-async function request(path, options) {
+async function request(path, options = {}) {
   const response = await fetch(path, options);
   const contentType = response.headers.get('content-type') || '';
   const body = await response.text();
@@ -285,7 +295,7 @@ function updateGenerateLayoutFields() {
   generateRectangleFieldsEl.hidden = !rectangle;
   generateRadialFieldsEl.hidden = rectangle;
   generateCenterSpacingFieldEl.hidden = type !== 'dual-radial';
-  document.getElementById('generate-center-spacing').required = type === 'dual-radial';
+  getElementById('generate-center-spacing').required = type === 'dual-radial';
   generateLayoutErrorEl.hidden = true;
   generateLayoutErrorEl.textContent = '';
 }
@@ -297,9 +307,9 @@ function openGenerateLayoutDialog() {
 }
 
 function generateLayoutOptions() {
-  const number = (id) => Number(document.getElementById(id).value);
+  const number = (id) => Number(getElementById(id).value);
   const optionalNumber = (id) => {
-    const value = document.getElementById(id).value;
+    const value = getElementById(id).value;
     return value === '' ? null : Number(value);
   };
   const type = generateLayoutTypeEl.value;
@@ -542,7 +552,7 @@ function renderControls() {
   modeNetworkEl.setAttribute('aria-pressed', String(networkMode));
   modeSetupEl.classList.toggle('active', setupMode);
   modeSetupEl.setAttribute('aria-pressed', String(setupMode));
-  document.getElementById('network-panel').hidden = !networkMode;
+  getElementById('network-panel').hidden = !networkMode;
   matrixSizeEl.value = state.matrix_size;
   matrixChannelsEl.value = state.matrix_channels_per_universe;
   matrixProtocolEl.value = state.matrix_protocol;
@@ -553,9 +563,9 @@ function renderControls() {
   matrixSacnStartEl.max = 63999 - universeCount + 1;
   if (document.activeElement !== matrixStartEl) matrixStartEl.value = state.matrix_artnet.port_address;
   if (document.activeElement !== matrixSacnStartEl) matrixSacnStartEl.value = state.matrix_sacn.universe;
-  document.getElementById('matrix-artnet-universe-label').hidden = state.matrix_protocol !== 'artnet';
-  document.getElementById('matrix-sacn-universe-label').hidden = state.matrix_protocol !== 'sacn';
-  document.getElementById('matrix-protocol-help').textContent = state.matrix_protocol === 'sacn'
+  getElementById('matrix-artnet-universe-label').hidden = state.matrix_protocol !== 'artnet';
+  getElementById('matrix-sacn-universe-label').hidden = state.matrix_protocol !== 'sacn';
+  getElementById('matrix-protocol-help').textContent = state.matrix_protocol === 'sacn'
     ? 'RGB, left to right, top to bottom. Match channel packing to your sender. sACN uses UDP port 5568 and universe multicast.'
     : 'RGB, left to right, top to bottom. Match channel packing to your sender. Art-Net uses UDP port 6454.';
   if (document.activeElement !== matrixAddressEl) matrixAddressEl.value = state.matrix_start_address;
@@ -569,13 +579,13 @@ function renderControls() {
   modeNdiEl.classList.toggle('active', ndiMode);
   modeNdiEl.setAttribute('aria-pressed', String(ndiMode));
   workspaceEl.hidden = !effectMode;
-  document.getElementById('output-controls').hidden =
+  getElementById('output-controls').hidden =
     !(effectMode || ndiMode || networkMode || setupMode);
-  document.getElementById('output-controls').classList.toggle('setup-mode', setupMode);
-  document.getElementById('led-effects-settings').hidden = setupMode;
-  document.getElementById('output-settings').hidden = !setupMode;
-  document.getElementById('image-quality-settings').hidden = setupMode;
-  document.getElementById('network-control-panel').hidden = !setupMode;
+  getElementById('output-controls').classList.toggle('setup-mode', setupMode);
+  getElementById('led-effects-settings').hidden = setupMode;
+  getElementById('output-settings').hidden = !setupMode;
+  getElementById('image-quality-settings').hidden = setupMode;
+  getElementById('network-control-panel').hidden = !setupMode;
   ndiPanelEl.hidden = !ndiMode;
   const ndiStatus = currentNdiStatus();
   ndiStatusEl.hidden = !ndiMode || !ndiStatus;
@@ -595,8 +605,8 @@ function renderControls() {
   if (document.activeElement !== networkControlAddressEl) networkControlAddressEl.value = state.network_control_start_address;
   if (document.activeElement !== networkControlHoldEl) networkControlHoldEl.value = state.network_control_hold;
   const controlSacn = state.network_control_protocol === 'sacn';
-  document.getElementById('network-control-artnet-label').hidden = controlSacn;
-  document.getElementById('network-control-sacn-label').hidden = !controlSacn;
+  getElementById('network-control-artnet-label').hidden = controlSacn;
+  getElementById('network-control-sacn-label').hidden = !controlSacn;
   const controlStats = state.network_control_status || {};
   networkControlStatusEl.textContent = controlStats.error ? 'Unavailable'
     : !state.network_control_enabled ? 'Disabled'
@@ -634,7 +644,7 @@ async function refreshNdiSources() {
   }
 }
 
-function setOnline(online, message) {
+function setOnline(online, message = '') {
   signalEl.classList.toggle('online', online);
   statusEl.textContent = online ? currentStatus() : 'Offline';
 
@@ -1008,9 +1018,9 @@ captureModalEl.addEventListener('cancel', (event) => {
 captureModalEl.addEventListener('click', (event) => {
   if (event.target === captureModalEl) closeCaptureWorkflow();
 });
-document.getElementById('generate-layout-open').addEventListener('click', openGenerateLayoutDialog);
-document.getElementById('generate-layout-close').addEventListener('click', () => generateLayoutModalEl.close());
-document.getElementById('generate-layout-submit').addEventListener('click', uploadGeneratedLayout);
+getElementById('generate-layout-open').addEventListener('click', openGenerateLayoutDialog);
+getElementById('generate-layout-close').addEventListener('click', () => generateLayoutModalEl.close());
+getElementById('generate-layout-submit').addEventListener('click', uploadGeneratedLayout);
 generateLayoutTypeEl.addEventListener('change', updateGenerateLayoutFields);
 generateLayoutModalEl.addEventListener('click', (event) => {
   if (event.target === generateLayoutModalEl) generateLayoutModalEl.close();

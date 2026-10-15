@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -24,14 +25,20 @@ def main():
     if not python.is_file():
         python = Path(sys.executable)
 
-    result = subprocess.run(
-        [str(python), '-m', 'pytest', '-q'],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        errors='replace',
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix='fbmatrix-pytest-') as temp_dir:
+        temp_root = Path(temp_dir)
+        result = subprocess.run(
+            [
+                str(python), '-m', 'pytest', '-q',
+                '--basetemp', str(temp_root / 'pytest-tmp'),
+                '-o', 'cache_dir=%s' % (temp_root / 'pytest-cache'),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            errors='replace',
+            check=False,
+        )
     output = '\n'.join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
 
     if result.returncode == 0:
