@@ -650,3 +650,57 @@ class TestLayout(unittest.TestCase):
                 common.load_layout(filename)
         finally:
             os.unlink(filename)
+
+
+class TestLiveLayout(unittest.TestCase):
+    def test_live_update_rebinds_source_and_updates_led_mapping(self):
+        for emulate in (False, True):
+            with self.subTest(emulate=emulate):
+                original = [[[0, 0, 0, 1, 0, 0], [1, 0, 0, 1, 0, 1]]]
+                matrix = fbmatrix.renderer(
+                    backend=test_backend, display='ws2811', layout=original,
+                    emulate=emulate, supersample=0)
+                matrix.reshape(840, 500)
+                for columns, layout in (
+                    (4, [list(reversed(original[0])), original[0][:1]]),
+                    (2, original),
+                ):
+                    def render():
+                        matrix.set_layout(layout, columns, 1,
+                                          led_effect.DEFAULT_LED_EFFECT, 'default')
+                        self.assertEqual(matrix.mainfbo.fbo, int(
+                            gl.glGetIntegerv(gl.GL_FRAMEBUFFER_BINDING)))
+                        self.assertEqual([0, 0, columns, 1], list(
+                            gl.glGetIntegerv(gl.GL_VIEWPORT)))
+                        gl.glEnable(gl.GL_SCISSOR_TEST)
+                        gl.glScissor(0, 0, columns // 2, 1)
+                        gl.glClearColor(1, 0, 0, 1)
+                        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+                        gl.glScissor(columns // 2, 0, columns // 2, 1)
+                        gl.glClearColor(0, 1, 0, 1)
+                        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+                        gl.glDisable(gl.GL_SCISSOR_TEST)
+                    matrix.render = render
+                    matrix.display()
+                    with matrix.ledfbo:
+                        pixels = gl.glReadPixels(0, 0, 2, 1, gl.GL_RGBA,
+                                                 gl.GL_UNSIGNED_BYTE)
+                    expected = ([0, 255, 0, 255, 255, 0, 0, 255] if columns == 4
+                                else [255, 0, 0, 255, 0, 255, 0, 255])
+                    self.assertEqual(list(bytes(pixels)), expected)
+                    self.assertEqual(len(layout), matrix.ledbuffer.height)
+
+    def test_changed_mode_is_rejected_before_replacing_resources(self):
+        for emulate in (False, True):
+            with self.subTest(emulate=emulate):
+                matrix = fbmatrix.renderer(
+                    backend=test_backend, display='ws2811', emulate=emulate,
+                    layout=[[[0, 0, 0, 1, 0, 0]] * 2])
+                previous = matrix.mainfbo
+                for length in (1, 3):
+                    layout = [[[0, 0, 0, 1, 0, 0]] * length]
+                    self.assertFalse(matrix.can_set_layout(layout))
+                    with self.assertRaisesRegex(RuntimeError, 'restart'):
+                        matrix.set_layout(layout, 1, 1,
+                                          led_effect.DEFAULT_LED_EFFECT, 'default')
+                    self.assertIs(previous, matrix.mainfbo)

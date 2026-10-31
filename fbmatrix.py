@@ -81,10 +81,17 @@ class renderer(object):
         elif self.displaytype == 'hub75e':
             self.signalgenerator.supersample = supersample
 
+    def can_set_layout(self, layout):
+        return (self.displaytype == 'ws2811' and
+                output_mode('ws2811', layout) ==
+                output_mode('ws2811', self.layout))
+
     def set_layout(self, layout, source_columns, source_rows,
                    led_effect_source, led_effect_id):
-        if not self.emulate or self.displaytype != 'ws2811':
-            raise RuntimeError('Live layout updates require WS2811 emulation')
+        if not self.can_set_layout(layout):
+            raise RuntimeError('Layout changes the output mode; restart fbmserve to apply it')
+
+        bound_fbo = int(gl.glGetIntegerv(gl.GL_FRAMEBUFFER_BINDING))
 
         strings = ledlayout.require_led_string_layout(layout)
         new_mainfbo = fbo.FBO(source_columns, source_rows,
@@ -101,11 +108,13 @@ class renderer(object):
         new_signalgenerator = displays.ws2811.signalgenerator(
             strings, supersample=self.supersample)
         new_signalgenerator.setTexture(new_ledfbo.getTexture())
-        new_tree = assembly.tree.tree(
-            displays.ws2811.flatten_layout(strings),
-            emitter_shape=(new_ledbuffer.width, new_ledbuffer.height),
-            string_lengths=[len(string) for string in strings])
-        new_tree.setTexture(new_ledfbo.getTexture())
+        new_tree = None
+        if self.emulate:
+            new_tree = assembly.tree.tree(
+                displays.ws2811.flatten_layout(strings),
+                emitter_shape=(new_ledbuffer.width, new_ledbuffer.height),
+                string_lengths=[len(string) for string in strings])
+            new_tree.setTexture(new_ledfbo.getTexture())
 
         old_mainfbo = self.mainfbo
         old_ledfbo = self.ledfbo
@@ -119,7 +128,8 @@ class renderer(object):
         self.ledfbo = new_ledfbo
         self.signalgenerator = new_signalgenerator
         self.tree = new_tree
-        self.texquad.setTexture(new_mainfbo.getTexture())
+        if self.emulate or self.preview:
+            self.texquad.setTexture(new_mainfbo.getTexture())
 
         for old_fbo in (old_mainfbo, old_ledfbo, old_bitplane):
             gl.glDeleteFramebuffers(1, [old_fbo.fbo])
@@ -129,6 +139,15 @@ class renderer(object):
             old_textures.append(old_ledbuffer.codebook_texture)
         if old_textures:
             gl.glDeleteTextures(len(old_textures), old_textures)
+
+        # Commands run inside the old source FBO's context manager. Continue
+        # this frame in the replacement rather than the deleted framebuffer.
+        if bound_fbo == old_mainfbo.fbo:
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, new_mainfbo.fbo)
+            gl.glViewport(0, 0, source_columns, source_rows)
+            self.clear()
+        else:
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, bound_fbo)
 
     def display(self):
         with self.mainfbo:
