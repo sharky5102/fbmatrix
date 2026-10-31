@@ -41,6 +41,15 @@ def load_layout(filename):
     raise RuntimeError('Could not read layout JSON from %s: %s' % (filename, last_error))
 
 
+def display_backend_from_args(args):
+    """Select PyOpenGL's platform without creating a window or DRM context."""
+    if sys.platform == 'win32' or args.emulate or args.preview or args.raw:
+        from glut import GLUTDisplay
+        return GLUTDisplay
+    from kms import KMSDisplay
+    return KMSDisplay
+
+
 def renderer_from_args(args, layout_override=None):
     display = 'ws2811' if args.emulate else args.display
     layout = []
@@ -69,14 +78,13 @@ def renderer_from_args(args, layout_override=None):
         source_columns = args.source_columns or max(1, int(args.columns * args.source_scale))
         source_rows = args.source_rows or max(1, int(args.rows * args.source_scale))
 
+    backend_class = display_backend_from_args(args)
     if sys.platform == 'win32' or args.emulate or args.preview or args.raw:
-        from glut import GLUTDisplay
-        backend = GLUTDisplay()
+        backend = backend_class()
     else:
-        from kms import KMSDisplay
         mode = output_mode(display, layout)
         print(output_stats(display, mode, layout), file=sys.stderr)
-        backend = KMSDisplay(*mode)
+        backend = backend_class(*mode)
 
     import fbmatrix
 
