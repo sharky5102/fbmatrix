@@ -172,7 +172,6 @@ async function init() {
     const layout = await request('/api/layout');
     layoutPoints = layout.points;
     layoutStats = layout.stats;
-    showLayoutStatus(layout);
     Object.assign(state, await request('/api/state'));
     await refreshNdiSources();
     renderControls();
@@ -359,7 +358,6 @@ async function uploadGeneratedLayout() {
     const result = await request('/api/layout');
     layoutPoints = result.points;
     layoutStats = result.stats;
-    showLayoutStatus(result);
     renderLayoutStats();
     drawLayoutPreview();
     await updateState({ led_effect: 'layout_colors' });
@@ -427,7 +425,6 @@ async function finishCaptureUpload(message = 'Layout uploaded and saved.') {
   const result = await request('/api/layout');
   layoutPoints = result.points;
   layoutStats = result.stats;
-  showLayoutStatus(result);
   renderLayoutStats();
   drawLayoutPreview();
   await updateState({ led_effect: 'layout_colors' });
@@ -1049,9 +1046,3 @@ networkControlHoldEl.addEventListener('change', () => {
 setInterval(refreshState, 1500);
 setInterval(refreshNdiSources, 3000);
 init();
-
-function showLayoutStatus(result) {
-  getElementById('layout-status').textContent = result.restart_required
-    ? 'Layout saved. Restart fbmserve to apply the changed string length.'
-    : '';
-}

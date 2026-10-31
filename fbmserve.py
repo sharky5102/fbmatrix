@@ -761,7 +761,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 points = []
                 stats = None
             self.write_json({'points': points, 'stats': stats,
-                             'restart_required': self.server.layout_restart_required})
+                             'restart_required': False})
             return
 
         if parsed.path.startswith('/api/capture-sessions/'):
@@ -1054,7 +1054,6 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.server.app_state.update(**values)
         matrix = self.server.matrix
         live = matrix is not None and matrix.can_set_layout(layout)
-        self.server.layout_restart_required = not live
         if live:
             self.server.commands.put({'type': 'set_layout', 'layout': layout})
         return not live
@@ -1421,7 +1420,6 @@ def create_server(host, port, web_dir, effects_dir, state, commands,
     server.setup_shaders_dir = setup_shaders_dir
     server.app_state = state
     server.matrix = None
-    server.layout_restart_required = False
     server.capture_sessions = {}
     server.capture_lock = threading.Lock()
     server.commands = commands

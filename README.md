@@ -299,11 +299,11 @@ WS2811 starts with blank output until a layout is configured through Setup;
 no `layout.json` file is required. Use `--layout` to explicitly import an initial
 layout. HUB75 uses its matrix dimensions and ignores LED layouts.
 A layout received through Setup is stored in that file. Captured, uploaded, and
-generated layouts apply live when the longest string length matches the running
-layout. Coordinate, enabled-mask, and string-count changes rebuild the LED mapping
-and source framebuffer without resetting KMS. If the longest string length changes,
-Setup shows a restart message and the running layout remains active until
-`fbmserve.py` restarts. Emulation uses the same rule. A saved
+generated WS2811 layouts apply live on hardware and in emulation, including
+changes to the longest string length. Hardware replaces the KMS mode and scanout
+surfaces while preserving the OpenGL context. If a mode change fails, the old
+layout remains active and the error is shown in the UI; the new layout stays
+saved and can be retried by uploading it again. A saved
 NDI source does not need to be visible during startup: the receiver keeps
 trying that source so it can connect when the source comes online.
 
@@ -327,7 +327,7 @@ the normal nested WS2811 layout array. The upload is accepted once and only
 while the browser remains in Setup. Closing the dialog or leaving Setup
 invalidates the URL. A JSON file can also be uploaded from the dialog. The
 captured layout is stored in application state and uses the same live-update
-and restart rules as other Setup layouts.
+rules as other Setup layouts.
 
 Effects use three RGB palette slots, always editable in the web UI. `solid`
 uses Color 1; `additive_bars` and `additive_lattice` use all three colors;

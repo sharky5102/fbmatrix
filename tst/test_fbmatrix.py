@@ -690,17 +690,55 @@ class TestLiveLayout(unittest.TestCase):
                     self.assertEqual(list(bytes(pixels)), expected)
                     self.assertEqual(len(layout), matrix.ledbuffer.height)
 
-    def test_changed_mode_is_rejected_before_replacing_resources(self):
+    def test_live_layout_grows_shrinks_and_clears_without_restart(self):
         for emulate in (False, True):
             with self.subTest(emulate=emulate):
                 matrix = fbmatrix.renderer(
                     backend=test_backend, display='ws2811', emulate=emulate,
                     layout=[[[0, 0, 0, 1, 0, 0]] * 2])
-                previous = matrix.mainfbo
-                for length in (1, 3):
+                matrix.reshape(840, 500)
+                for length in (5, 1, 3, 0):
                     layout = [[[0, 0, 0, 1, 0, 0]] * length]
-                    self.assertFalse(matrix.can_set_layout(layout))
-                    with self.assertRaisesRegex(RuntimeError, 'restart'):
-                        matrix.set_layout(layout, 1, 1,
-                                          led_effect.DEFAULT_LED_EFFECT, 'default')
-                    self.assertIs(previous, matrix.mainfbo)
+                    self.assertTrue(matrix.can_set_layout(layout))
+                    matrix.set_layout(layout, 2, 1,
+                                      led_effect.DEFAULT_LED_EFFECT, 'default')
+                    matrix.render = lambda: render_solid((1, 0, 0))
+                    matrix.display()
+                    self.assertEqual(length, matrix.ledbuffer.total_leds)
+                    self.assertEqual(max(1, length),
+                                     matrix.signalgenerator.string_length)
+
+    def test_kms_mode_failure_keeps_old_layout_and_framebuffer(self):
+        matrix = fbmatrix.renderer(
+            backend=test_backend, display='ws2811',
+            layout=[[[0, 0, 0, 1, 0, 0]] * 2])
+        old_fbo, old_layout = matrix.mainfbo, matrix.layout
+        with mock.patch.object(matrix, 'backend', 'kms'), \
+                mock.patch.object(matrix, 'display_backend') as backend:
+            backend.set_mode.side_effect = RuntimeError('mode rejected')
+            with old_fbo:
+                with self.assertRaisesRegex(RuntimeError, 'mode rejected'):
+                    matrix.set_layout([[[0, 0, 0, 1, 0, 0]] * 5], 2, 1,
+                                      led_effect.DEFAULT_LED_EFFECT, 'default')
+                self.assertEqual(old_fbo.fbo, int(
+                    gl.glGetIntegerv(gl.GL_FRAMEBUFFER_BINDING)))
+            self.assertIs(matrix.mainfbo, old_fbo)
+            self.assertEqual(matrix.layout, old_layout)
+            backend.set_mode.assert_called_once_with(840, 5, 27000, 1, 1, 48)
+
+    def test_kms_resize_updates_output_viewport(self):
+        matrix = fbmatrix.renderer(
+            backend=test_backend, display='ws2811',
+            layout=[[[0, 0, 0, 1, 0, 0]] * 2])
+        matrix.reshape(840, 2)
+        with mock.patch.object(matrix, 'backend', 'kms'), \
+                mock.patch.object(matrix, 'display_backend') as backend:
+            def render():
+                matrix.set_layout([[[0, 0, 0, 1, 0, 0]] * 5], 2, 1,
+                                  led_effect.DEFAULT_LED_EFFECT, 'default')
+            matrix.render = render
+            with mock.patch.object(matrix.signalgenerator.__class__, 'render') as signal:
+                signal.side_effect = lambda: self.assertEqual(
+                    [0, 0, 840, 5], list(gl.glGetIntegerv(gl.GL_VIEWPORT)))
+                matrix.display()
+            backend.set_mode.assert_called_once_with(840, 5, 27000, 1, 1, 48)
