@@ -1482,6 +1482,9 @@ def main():
     setup_shaders_dir = os.path.abspath(args.setup_shaders_dir)
     web_dir = os.path.abspath(args.web_dir)
     display = 'ws2811' if args.emulate else args.display
+    # Effect discovery imports OpenGL; select its platform before that import,
+    # while leaving context creation until the saved layout has been loaded.
+    common.display_backend_from_args(args)
     effects = get_shader_effect().discover_effects(effects_dir)
     if not effects:
         raise RuntimeError('No effects found in %s' % effects_dir)
