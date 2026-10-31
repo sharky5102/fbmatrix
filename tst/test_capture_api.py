@@ -29,6 +29,7 @@ def capture_api(tmp_path):
             raw = json.loads(raw)
         return response.status, raw, response.getheader('Content-Type')
 
+    request.server = server
     yield request, state
     connection.close()
     server.shutdown()
@@ -151,3 +152,30 @@ def test_closing_or_leaving_setup_invalidates_capture_session(capture_api):
     assert status == 200
     status, _, _ = request('GET', '/api/capture-sessions/%s' % leaving_setup['token'])
     assert status == 404
+
+
+@pytest.mark.parametrize('emulate', [False, True])
+@pytest.mark.parametrize('path', ['/api/layout', 'capture'])
+def test_layout_updates_are_queued_for_all_string_lengths(
+        capture_api, emulate, path):
+    from types import SimpleNamespace
+    request, state = capture_api
+    active = [[[0, 0, 0, 1, 0, 0]] * 2]
+    matrix = SimpleNamespace(emulate=emulate, layout=active)
+    matrix.can_set_layout = lambda layout: True
+    request.server.matrix = matrix
+    for length in (3, 3, 2):
+        layout = [[[1, 2, 3, 1, 0, 0]] * length]
+        url = path
+        if path == 'capture':
+            session = create_session(request)
+            url = '/api/capture/' + session['token']
+        status, body, _ = request('POST', url, layout)
+        assert status == 200
+        assert body['restart_required'] is False
+        assert len(state.layout_snapshot()[0]) == length
+        _, preview, _ = request('GET', '/api/layout')
+        assert preview['restart_required'] is False
+        command = request.server.commands.get_nowait()
+        assert command['type'] == 'set_layout'
+        assert len(command['layout'][0]) == length

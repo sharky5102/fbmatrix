@@ -417,7 +417,7 @@ async function checkCaptureSession() {
   }
 }
 
-async function finishCaptureUpload(message = 'Layout uploaded and saved. Restart fbmserve to apply it.') {
+async function finishCaptureUpload(message = 'Layout uploaded and saved.') {
   clearInterval(capturePollTimer);
   capturePollTimer = null;
   setCaptureStatus(message);

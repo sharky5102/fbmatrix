@@ -81,35 +81,65 @@ class renderer(object):
         elif self.displaytype == 'hub75e':
             self.signalgenerator.supersample = supersample
 
+    def can_set_layout(self, layout):
+        return self.displaytype == 'ws2811'
+
+    @staticmethod
+    def _delete_layout_resources(mainfbo, ledfbo, signalgenerator, ledbuffer):
+        bitplane = signalgenerator.bitplane if signalgenerator else None
+        for target in (mainfbo, ledfbo, bitplane):
+            if target is not None:
+                gl.glDeleteFramebuffers(1, [target.fbo])
+                gl.glDeleteTextures(1, [target.tex])
+        if ledbuffer is not None:
+            textures = list(ledbuffer.lamptex)
+            if ledbuffer.codebook_texture:
+                textures.append(ledbuffer.codebook_texture)
+            gl.glDeleteTextures(len(textures), textures)
+
     def set_layout(self, layout, source_columns, source_rows,
                    led_effect_source, led_effect_id):
-        if not self.emulate or self.displaytype != 'ws2811':
-            raise RuntimeError('Live layout updates require WS2811 emulation')
-
+        if not self.can_set_layout(layout):
+            raise RuntimeError('Live layouts require WS2811 output')
         strings = ledlayout.require_led_string_layout(layout)
-        new_mainfbo = fbo.FBO(source_columns, source_rows,
-                              mag_filter=gl.GL_NEAREST,
-                              min_filter=gl.GL_LINEAR_MIPMAP_LINEAR)
-        new_ledbuffer = displays.ws2811_ledbuffer.ledbuffer(
-            strings, supersample=self.supersample)
-        new_ledbuffer.set_effect_source(
-            led_effect_source, effect_id=led_effect_id)
-        new_ledbuffer.setTexture(new_mainfbo.getTexture())
-        new_ledfbo = fbo.FBO(
-            new_ledbuffer.width, new_ledbuffer.height,
-            mag_filter=gl.GL_NEAREST, min_filter=gl.GL_NEAREST)
-        new_signalgenerator = displays.ws2811.signalgenerator(
-            strings, supersample=self.supersample)
-        new_signalgenerator.setTexture(new_ledfbo.getTexture())
-        new_tree = assembly.tree.tree(
-            displays.ws2811.flatten_layout(strings),
-            emitter_shape=(new_ledbuffer.width, new_ledbuffer.height),
-            string_lengths=[len(string) for string in strings])
-        new_tree.setTexture(new_ledfbo.getTexture())
+        mode = output_mode('ws2811', strings)
+        bound_fbo = int(gl.glGetIntegerv(gl.GL_FRAMEBUFFER_BINDING))
+        new_mainfbo = new_ledfbo = new_signalgenerator = new_ledbuffer = None
+        new_tree = None
+        try:
+            new_mainfbo = fbo.FBO(source_columns, source_rows,
+                                  mag_filter=gl.GL_NEAREST,
+                                  min_filter=gl.GL_LINEAR_MIPMAP_LINEAR)
+            new_ledbuffer = displays.ws2811_ledbuffer.ledbuffer(
+                strings, supersample=self.supersample)
+            new_ledbuffer.set_effect_source(
+                led_effect_source, effect_id=led_effect_id)
+            new_ledbuffer.setTexture(new_mainfbo.getTexture())
+            new_ledfbo = fbo.FBO(
+                new_ledbuffer.width, new_ledbuffer.height,
+                mag_filter=gl.GL_NEAREST, min_filter=gl.GL_NEAREST)
+            new_signalgenerator = displays.ws2811.signalgenerator(
+                strings, supersample=self.supersample)
+            new_signalgenerator.setTexture(new_ledfbo.getTexture())
+            if self.emulate:
+                new_tree = assembly.tree.tree(
+                    displays.ws2811.flatten_layout(strings),
+                    emitter_shape=(new_ledbuffer.width, new_ledbuffer.height),
+                    string_lengths=[len(string) for string in strings])
+                new_tree.setTexture(new_ledfbo.getTexture())
+            if (self.backend == 'kms' and not self.emulate and
+                    not self.preview and not self.raw):
+                self.display_backend.set_mode(*mode)
+                self.screenWidth, self.screenHeight = mode[:2]
+        except BaseException:
+            self._delete_layout_resources(new_mainfbo, new_ledfbo,
+                                          new_signalgenerator, new_ledbuffer)
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, bound_fbo)
+            raise
 
         old_mainfbo = self.mainfbo
         old_ledfbo = self.ledfbo
-        old_bitplane = self.signalgenerator.bitplane
+        old_signalgenerator = self.signalgenerator
         old_ledbuffer = self.ledbuffer
         self.layout = strings
         self.source_columns = source_columns
@@ -119,16 +149,16 @@ class renderer(object):
         self.ledfbo = new_ledfbo
         self.signalgenerator = new_signalgenerator
         self.tree = new_tree
-        self.texquad.setTexture(new_mainfbo.getTexture())
-
-        for old_fbo in (old_mainfbo, old_ledfbo, old_bitplane):
-            gl.glDeleteFramebuffers(1, [old_fbo.fbo])
-            gl.glDeleteTextures(1, [old_fbo.tex])
-        old_textures = list(old_ledbuffer.lamptex)
-        if old_ledbuffer.codebook_texture:
-            old_textures.append(old_ledbuffer.codebook_texture)
-        if old_textures:
-            gl.glDeleteTextures(len(old_textures), old_textures)
+        if self.emulate or self.preview:
+            self.texquad.setTexture(new_mainfbo.getTexture())
+        self._delete_layout_resources(old_mainfbo, old_ledfbo,
+                                      old_signalgenerator, old_ledbuffer)
+        if bound_fbo == old_mainfbo.fbo:
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, new_mainfbo.fbo)
+            gl.glViewport(0, 0, source_columns, source_rows)
+            self.clear()
+        else:
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, bound_fbo)
 
     def display(self):
         with self.mainfbo:
@@ -140,6 +170,8 @@ class renderer(object):
                 self.clear()
                 self.ledbuffer.render()
 
+        if self.backend == 'kms' and not self.emulate and not self.preview:
+            gl.glViewport(0, 0, self.screenWidth, self.screenHeight)
         gl.glClearColor(0, 0, 0, 0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 

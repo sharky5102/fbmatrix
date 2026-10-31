@@ -646,7 +646,7 @@ class InputRenderer:
                         command['values']['led_effect'] != self.failed_led_effect):
                     self.failed_led_effect = None
             elif command['type'] == 'set_layout':
-                if not self.matrix or not getattr(self.matrix, 'emulate', False):
+                if self.matrix is None:
                     continue
                 try:
                     self.state.update(led_effect='layout_colors')
@@ -760,7 +760,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             else:
                 points = []
                 stats = None
-            self.write_json({'points': points, 'stats': stats})
+            self.write_json({'points': points, 'stats': stats,
+                             'restart_required': False})
             return
 
         if parsed.path.startswith('/api/capture-sessions/'):
@@ -1019,7 +1020,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             'success': True,
             'restart_required': restart_required,
             'message': ('Layout saved. Restart fbmserve to apply it.'
-                        if restart_required else 'Layout updated in emulation.'),
+                        if restart_required else 'Layout update queued.'),
         })
 
     def deactivate_capture_sessions(self):
@@ -1041,7 +1042,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             'success': True,
             'restart_required': restart_required,
             'message': ('Layout saved. Restart fbmserve to apply it.'
-                        if restart_required else 'Layout updated in emulation.'),
+                        if restart_required else 'Layout update queued.'),
         })
 
     def store_uploaded_layout(self, layout):
@@ -1051,10 +1052,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 snapshot['led_effect'] == 'calibration'):
             values['led_effect'] = 'layout_colors'
         self.server.app_state.update(**values)
-        emulating = bool(getattr(self.server.matrix, 'emulate', False))
-        if emulating:
+        matrix = self.server.matrix
+        live = matrix is not None and matrix.can_set_layout(layout)
+        if live:
             self.server.commands.put({'type': 'set_layout', 'layout': layout})
-        return not emulating
+        return not live
 
     def normalize_state(self, payload):
         if not isinstance(payload, dict):

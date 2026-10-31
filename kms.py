@@ -120,6 +120,10 @@ class _DRMDevice:
             "Unable to allocate atomic KMS request")
 
 
+class KMSContextError(Exception):
+    """Rendering cannot continue because the previous EGL surface was lost."""
+
+
 class KMSDisplay:
     """Desktop OpenGL display backed by EGL, GBM, and atomic DRM/KMS."""
 
@@ -456,6 +460,7 @@ class KMSDisplay:
             self._raise_egl("Failed to bind desktop OpenGL")
 
         config = self._egl_config()
+        self.egl_config = config
         self.egl_surface = egl.eglCreatePlatformWindowSurface(
             self.egl_display, config, self.gbm_surface, ffi.NULL)
         if self.egl_surface == ffi.NULL:
@@ -537,12 +542,21 @@ class KMSDisplay:
         next_bo = gbm.gbm_surface_lock_front_buffer(self.gbm_surface)
         if next_bo == ffi.NULL:
             raise RuntimeError("Unable to lock GBM front buffer")
-        next_fb = self._framebuffer_for_bo(next_bo)
-
+        try:
+            next_fb = self._framebuffer_for_bo(next_bo)
+        except BaseException:
+            gbm.gbm_surface_release_buffer(self.gbm_surface, next_bo)
+            raise
         if self.current_bo == ffi.NULL:
-            self._modeset(next_fb)
+            try:
+                self._modeset(next_fb)
+            except BaseException:
+                gbm.gbm_surface_release_buffer(self.gbm_surface, next_bo)
+                raise
         else:
             commit_started = time.monotonic()
+            # If waiting for a committed flip fails, do not release a buffer
+            # that may already be scanning out. close() disables scanout first.
             self._atomic_present(next_fb)
             self.kms_commit_time += time.monotonic() - commit_started
             self.egl_swap_time += swap_finished - swap_started
@@ -550,6 +564,96 @@ class KMSDisplay:
             gbm.gbm_surface_release_buffer(
                 self.gbm_surface, self.current_bo)
         self.current_bo = next_bo
+
+    def set_mode(self, width, height, clock, vfp=0, vsync=0, vbp=0):
+        """Atomically replace scanout surfaces, preserving the EGL context.
+
+        Called on the rendering thread between completed presentations. Keep the
+        previous scanout alive until the new surface has passed its modeset.
+        """
+        if self.closed:
+            raise RuntimeError('Cannot change a closed KMS display')
+        mode = self._create_mode(width, height, clock, vfp, vsync, vbp)
+        if bytes(ffi.buffer(mode)) == bytes(ffi.buffer(self.mode)):
+            return
+
+        old = (self.width, self.height, self.mode, self.mode_blob_id,
+               self.gbm_surface, self.egl_surface, self.current_bo,
+               self.framebuffers)
+        new_gbm = ffi.NULL
+        new_egl = ffi.NULL
+        blob = ffi.new('unsigned int *')
+        bound_fbo = int(gl.glGetIntegerv(gl.GL_FRAMEBUFFER_BINDING))
+        gl.glPushAttrib(gl.GL_VIEWPORT_BIT | gl.GL_COLOR_BUFFER_BIT |
+                        gl.GL_SCISSOR_BIT)
+        switched = False
+        try:
+            if drm.drmModeCreatePropertyBlob(
+                    self.fd, mode, ffi.sizeof('drmModeModeInfo'), blob) != 0:
+                raise RuntimeError('Unable to create DRM mode property blob')
+            new_gbm = gbm.gbm_surface_create(
+                self.gbm_device, width, height, self.format,
+                GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING)
+            if new_gbm == ffi.NULL:
+                raise RuntimeError('Failed to create replacement GBM surface')
+            new_egl = egl.eglCreatePlatformWindowSurface(
+                self.egl_display, self.egl_config, new_gbm, ffi.NULL)
+            if new_egl == ffi.NULL:
+                self._raise_egl('Failed to create replacement EGL surface')
+            if not egl.eglMakeCurrent(
+                    self.egl_display, new_egl, new_egl, self.egl_context):
+                self._raise_egl('Failed to make replacement EGL surface current')
+            switched = True
+            (self.width, self.height, self.mode, self.mode_blob_id,
+             self.gbm_surface, self.egl_surface, self.current_bo,
+             self.framebuffers) = (width, height, mode, blob[0], new_gbm,
+                                   new_egl, ffi.NULL, {})
+            if not egl.eglSwapInterval(self.egl_display, 0):
+                self._raise_egl('Failed to disable EGL swap interval')
+            self._validate_surface_size()
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+            gl.glViewport(0, 0, width, height)
+            gl.glDisable(gl.GL_SCISSOR_TEST)
+            gl.glColorMask(True, True, True, True)
+            gl.glClearColor(0, 0, 0, 0)
+            gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+            # Synchronous ALLOW_MODESET commit; old BOs remain locked until it
+            # succeeds. A rejected atomic commit leaves the old scanout intact.
+            self.present()
+        except BaseException:
+            new_fbs = self.framebuffers if switched else {}
+            (self.width, self.height, self.mode, self.mode_blob_id,
+             self.gbm_surface, self.egl_surface, self.current_bo,
+             self.framebuffers) = old
+            if switched and not egl.eglMakeCurrent(
+                    self.egl_display, self.egl_surface, self.egl_surface,
+                    self.egl_context):
+                raise KMSContextError(
+                    'Failed to restore previous EGL surface after mode failure')
+            self._release_mode_surface(new_gbm, new_egl, ffi.NULL,
+                                       new_fbs, blob[0])
+            raise
+        else:
+            self._release_mode_surface(old[4], old[5], old[6], old[7], old[3])
+            self.timing_frames = 0
+            self.egl_swap_time = 0.0
+            self.kms_commit_time = 0.0
+        finally:
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, bound_fbo)
+            gl.glPopAttrib()
+
+    def _release_mode_surface(self, gbm_surface, egl_surface, bo,
+                              framebuffers, blob_id):
+        if bo != ffi.NULL:
+            gbm.gbm_surface_release_buffer(gbm_surface, bo)
+        for fb_id in set(framebuffers.values()):
+            drm.drmModeRmFB(self.fd, fb_id)
+        if egl_surface != ffi.NULL:
+            egl.eglDestroySurface(self.egl_display, egl_surface)
+        if gbm_surface != ffi.NULL:
+            gbm.gbm_surface_destroy(gbm_surface)
+        if blob_id:
+            drm.drmModeDestroyPropertyBlob(self.fd, blob_id)
 
     def consume_timings(self):
         if self.timing_frames == 0:

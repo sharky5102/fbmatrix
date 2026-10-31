@@ -87,3 +87,27 @@ def test_dmx_does_not_override_ndi_input_mode_or_source():
     assert snapshot['input_mode'] == 'ndi'
     assert snapshot['ndi_source'] == 'Configured source'
     assert snapshot['brightness'] == 0
+
+
+@pytest.mark.parametrize('emulate', [False, True])
+def test_layout_command_rebuilds_mapping_and_effect_dimensions(emulate):
+    layout = [[[0, 0, 0, 1, 0, 0], [2, 1, 0, 1, 0, 1]]]
+    state = fbmserve.AppState('first', input_mode='setup')
+    commands = queue.Queue()
+    matrix = mock.Mock(emulate=emulate, source_scale=4)
+    renderer = fbmserve.InputRenderer(
+        'effects', EFFECTS, 8, 8, state, commands, matrix=matrix)
+    renderer.quad = mock.Mock(width=8, height=8)
+    commands.put({'type': 'set_layout', 'layout': layout})
+
+    renderer.apply_commands()
+
+    width, height = fbmserve.common.layout_source_size(layout, 4)
+    args = matrix.set_layout.call_args.args
+    assert args[:3] == (fbmserve.ledlayout.require_led_string_layout(layout),
+                        width, height)
+    assert args[4] == 'layout_colors'
+    assert (renderer.width, renderer.height) == (width, height)
+    assert (renderer.quad.width, renderer.quad.height) == (width, height)
+    assert renderer.current_led_effect == 'layout_colors'
+    assert state.snapshot()['error'] is None
